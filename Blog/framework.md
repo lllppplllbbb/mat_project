@@ -69,3 +69,67 @@
   - 2 动态更新： 掩码随着特征在网络中的传播而动态更新，反映当前有效信息的分布。
   - 3 注意力引导： 掩码信息用于引导注意力机制，使模型能够区分有效区域和无效区域。
 
+
+## mat.py的流程图
+```mermaid
+flowchart TD
+  A0["输入图像 Image_in Bx3xHxW"] --> A1["输入遮罩 Mask_in Bx1xHxW"]
+  A1 --> A2["第一阶段 FirstStage 粗修复"]
+
+  %% 第一阶段编码流程
+  A2 --> B0["拼接 mask - 0.5 和 image * mask"]
+  B0 --> B1["卷积 Conv2dLayerPartial + 掩码引导"]
+  B1 --> B2["多层 DownConv 下采样到 64x64"]
+
+  %% 第一阶段 Transformer 路径
+  B2 --> C1["转换为 Token：feature2token"]
+  C1 --> C2["BasicLayer Transformer Block ×5"]
+  C2 --> C3["前3层 PatchMerging 下采样"]
+  C3 --> C4["中间层插入 WS 风格向量"]
+  C4 --> C5["后2层 PatchUpsample 上采样 + 跳跃连接"]
+  C5 --> C6["Token2Feature 转回空间特征图"]
+
+  %% 风格解码路径
+  C6 --> D1["DecStyleBlock ×N（风格调制 + Skip连接）"]
+  D1 --> D2["第一阶段输出图像 x1"]
+
+  %% 第二阶段连接
+  D2 --> E0["第二阶段 SynthesisNet 精修复"]
+  A0 --> E0
+  A1 --> E0
+
+  %% 第二阶段输入构建
+  E0 --> F0["构建融合输入：(mask * image) + (1 - mask) * x1"]
+  F0 --> F1["拼接 mask - 0.5, blend_img, image * mask"]
+  F1 --> F2["Encoder 编码器提取特征 E_features"]
+
+  %% Style 提取与注入
+  F2 --> G1["提取 fea_16 特征图"]
+  G1 --> G2["to_style 提取风格向量 GS"]
+  G1 --> G3["square_embed(ws) → 样式补充 AddN"]
+  G2 --> H0["拼接风格向量 GS 和 WS"]
+
+  %% 解码阶段
+  H0 --> I0["Decoder 解码器 DecBlock 多层"]
+  F2 --> I0
+  I0 --> I1["输出图像 x2"]
+
+  %% 输出融合
+  I1 --> J0["mask * 原图 + (1 - mask) * x2"]
+  J0 --> J1["最终输出图像"]
+
+  %% 标注结构块
+  subgraph 第一阶段结构 [FirstStage 粗修复结构]
+    B1 --> B2
+    B2 --> C1 --> C2 --> C3 --> C4 --> C5 --> C6
+    C6 --> D1 --> D2
+  end
+
+  subgraph 第二阶段结构 [SynthesisNet 精修复结构]
+    F1 --> F2 --> G1
+    G1 --> G2 --> H0
+    H0 --> I0 --> I1
+  end
+  ```
+
+
