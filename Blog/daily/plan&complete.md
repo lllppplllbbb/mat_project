@@ -14,3 +14,18 @@
 ## 4.20
 - 下载了PASCAL VOC 2012数据集，准备开始训练。
 - 改mask_generator_512_small.py，生成10+5张掩码，test_masks.py验证（128x128，0/255）。
+## 4.20
+- 验证10+5张128x128图像和掩码（`/kaggle/input/pascal-voc-mat`）。
+- 调整Kaggle文件结构（`datasets/`, `losses/`, `networks/`）。
+- 解决`dnnlib` 404，用`dnnlib.py`（`EasyDict`）。
+- 尝试PyTorch 1.8.1+cu102、1.10.0+cu102、1.7.0+cu101，均失败（pip源无旧版）。
+- 发现`train.py`可能缺依赖（如`training_loop.py`）。
+- **问题**：
+  - PyTorch版本不可用。
+  - 训练依赖不完整。
+- **明日计划**：
+  1. 解决PyTorch（1.13.0+cu117或清华源）。
+  2. 补齐`train.py`依赖。
+  3. 跑训练（128x128，kimg=1）。
+  4. 加打印（`training_loop.py`, `loss.py`）。
+  5. 跑DeepLabv3。
