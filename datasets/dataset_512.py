@@ -22,7 +22,6 @@ try:
 except ImportError:
     pyspng = None
 
-from datasets.mask_generator_512 import RandomMask
 
 #----------------------------------------------------------------------------
 
@@ -30,17 +29,21 @@ class Dataset(torch.utils.data.Dataset):
     def __init__(self,
         name,                   # Name of the dataset.
         raw_shape,              # Shape of the raw image data (NCHW).
+        resolution=128, 
         max_size    = None,     # Artificially limit the size of the dataset. None = no limit. Applied before xflip.
         use_labels  = False,    # Enable conditioning labels? False = label dimension is zero.
         xflip       = False,    # Artificially double the size of the dataset via x-flips. Applied after max_size.
         random_seed = 0,        # Random seed to use when applying max_size.
+        hole_range=[0,1],
+        **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self._name = name
         self._raw_shape = list(raw_shape)
         self._use_labels = use_labels
         self._raw_labels = None
         self._label_shape = None
-        self._load_mask()
+        self._hole_range = hole_range  # 保存hole_range参数
+        self.resolution = resolution
 
         # Apply max_size.
         self._raw_idx = np.arange(self._raw_shape[0], dtype=np.int64)
@@ -71,9 +74,8 @@ class Dataset(torch.utils.data.Dataset):
         pass
 
     def _load_raw_image(self, raw_idx): # to be overridden by subclass
-        res = self.resolution        #改分辨率,用__init__的resolution参数
         raise NotImplementedError
-
+        
     def _load_raw_labels(self): # to be overridden by subclass
         raise NotImplementedError
 
@@ -90,8 +92,13 @@ class Dataset(torch.utils.data.Dataset):
         return self._raw_idx.size
 
     def _load_mask(self, mpath=None):
+        # 添加安全检查
+        if not hasattr(self, '_path'):
+            return
         mpath = mpath or os.path.join(self._path, 'masks')
         self.masks = sorted(glob.glob(os.path.join(mpath, '*.png')))
+        if len(self.masks) == 0:
+            raise IOError(f'No mask files found in {mpath}')
 
     def __getitem__(self, idx):
         image = self._load_raw_image(self._raw_idx[idx])
@@ -101,7 +108,16 @@ class Dataset(torch.utils.data.Dataset):
         if self._xflip[idx]:
             assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
-        mask = cv2.imread(self.masks[idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :] / 255.0    #掩码
+            
+        # 检查是否有足够的掩码文件
+        if hasattr(self, 'masks') and len(self.masks) > 0:
+            # 确保索引在范围内
+            mask_idx = idx % len(self.masks)
+            mask = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :] / 255.0
+        else:
+            # 如果没有掩码文件，使用RandomMask生成
+             raise IOError('No masks available for training')
+            
         return image.copy(), mask, self.get_label(idx)
         # return image.copy(), self.get_label(idx)
 
@@ -169,9 +185,9 @@ class Dataset(torch.utils.data.Dataset):
 class ImageFolderMaskDataset(Dataset):
     def __init__(self,
         path,                   # Path to directory or zip.
-        resolution      = None, # Ensure specific resolution, None = highest available.
+        resolution      = 128, # Ensure specific resolution, None = highest available.
         hole_range=[0,1],
-        **super_kwargs,         # Additional arguments for the Dataset base class.
+        **super_kwargs,         
     ):
         self._path = path
         self._zipfile = None
@@ -192,10 +208,13 @@ class ImageFolderMaskDataset(Dataset):
             raise IOError('No image files found in the specified path')
 
         name = os.path.splitext(os.path.basename(self._path))[0]
-        raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
-        if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
-            raise IOError('Image files do not match the specified resolution')
-        super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
+        raw_shape = [len(self._image_fnames)] + [3, resolution, resolution]
+        super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, **super_kwargs)
+        self._load_mask()
+        # raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
+        # if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
+        #     raise IOError('Image files do not match the specified resolution')
+        # super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
 
     @staticmethod
     def _file_ext(fname):
@@ -239,7 +258,8 @@ class ImageFolderMaskDataset(Dataset):
             image = np.repeat(image, 3, axis=2)
 
         # restricted to 512x512
-        res = 512
+        # res = 512
+        res = self.resolution
         H, W, C = image.shape
         if H < res or W < res:
             top = 0
