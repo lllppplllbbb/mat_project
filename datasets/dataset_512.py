@@ -15,6 +15,7 @@ import json
 import torch
 import dnnlib
 import random
+import glob  # 添加这一行导入glob模块
 
 try:
     import pyspng
@@ -39,6 +40,7 @@ class Dataset(torch.utils.data.Dataset):
         self._use_labels = use_labels
         self._raw_labels = None
         self._label_shape = None
+        self._load_mask()
 
         # Apply max_size.
         self._raw_idx = np.arange(self._raw_shape[0], dtype=np.int64)
@@ -69,6 +71,7 @@ class Dataset(torch.utils.data.Dataset):
         pass
 
     def _load_raw_image(self, raw_idx): # to be overridden by subclass
+        res = self.resolution        #改分辨率,用__init__的resolution参数
         raise NotImplementedError
 
     def _load_raw_labels(self): # to be overridden by subclass
@@ -86,6 +89,10 @@ class Dataset(torch.utils.data.Dataset):
     def __len__(self):
         return self._raw_idx.size
 
+    def _load_mask(self, mpath=None):
+        mpath = mpath or os.path.join(self._path, 'masks')
+        self.masks = sorted(glob.glob(os.path.join(mpath, '*.png')))
+
     def __getitem__(self, idx):
         image = self._load_raw_image(self._raw_idx[idx])
         assert isinstance(image, np.ndarray)
@@ -94,7 +101,9 @@ class Dataset(torch.utils.data.Dataset):
         if self._xflip[idx]:
             assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
-        return image.copy(), self.get_label(idx)
+        mask = cv2.imread(self.masks[idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :] / 255.0    #掩码
+        return image.copy(), mask, self.get_label(idx)
+        # return image.copy(), self.get_label(idx)
 
     def get_label(self, idx):
         label = self._get_raw_labels()[self._raw_idx[idx]]

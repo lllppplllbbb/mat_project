@@ -69,6 +69,7 @@ class Dataset(torch.utils.data.Dataset):
         pass
 
     def _load_raw_image(self, raw_idx): # to be overridden by subclass
+        res = self.resolution    #改分辨率,用__init__的resolution参数
         raise NotImplementedError
 
     def _load_raw_labels(self): # to be overridden by subclass
@@ -188,9 +189,11 @@ class ImageFolderMaskDataset(Dataset):
             raise IOError('Image files do not match the specified resolution')
         self._load_mask()
         super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
-
-    def _load_mask(self, mpath='/data/liwenbo/datasets/Places365/standard/masks_val_512_eval'):
-        self.masks = sorted(glob.glob(mpath + '/*.png'))
+    
+    #改验证掩码路径
+    def _load_mask(self, mpath=None):
+        mpath = mpath or os.path.join(self._path, 'masks')
+        self.masks = sorted(glob.glob(os.path.join(mpath, '*.png')))
 
     @staticmethod
     def _file_ext(fname):

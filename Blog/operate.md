@@ -5,7 +5,11 @@ mat_env\Scripts\activate
 - 生成文件夹下文件名称
 ```bash
 Get-ChildItem -Path f:\MAT_project -Recurse -File | Where-Object { $_.FullName -notmatch '\\mat_env\\' -and $_.FullName -notmatch '\\Blog\\' } | Select-Object -ExpandProperty FullName > project_framework.txt
+- 更新requirements.txt
+```bash
+pip freeze > requirements.txt
 ```
+
 - 训练文件说明（train.py）
 ```
 --data：训练数据集目录（必填），对应图像文件夹（如F:/MAT_project/MAT/data/train_images）。
