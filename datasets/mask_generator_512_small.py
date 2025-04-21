@@ -2,17 +2,18 @@ import numpy as np
 from PIL import Image, ImageDraw
 import math
 import random
-
+import os
+import argparse
 
 def RandomBrush(
     max_tries,
     s,
-    min_num_vertex = 4,
-    max_num_vertex = 18,
-    mean_angle = 2*math.pi / 5,
-    angle_range = 2*math.pi / 15,
-    min_width = 12,
-    max_width = 48):
+    min_num_vertex=4,
+    max_num_vertex=18,
+    mean_angle=2*math.pi / 5,
+    angle_range=2*math.pi / 15,
+    min_width=12,
+    max_width=48):
     H, W = s, s
     average_radius = math.sqrt(H*H+W*W) / 8
     mask = Image.new('L', (W, H), 0)
@@ -81,13 +82,34 @@ def RandomMask(s, hole_range=[0,1]):
 def BatchRandomMask(batch_size, s, hole_range=[0, 1]):
     return np.stack([RandomMask(s, hole_range=hole_range) for _ in range(batch_size)], axis=0)
 
+def save_masks(img_dir, resolution):
+    # 创建masks子目录
+    mask_dir = os.path.join(img_dir, "masks")
+    os.makedirs(mask_dir, exist_ok=True)
+    
+    for img_name in os.listdir(img_dir):
+        if img_name.endswith('.jpg'):
+            mask = RandomMask(s=resolution)
+            mask = mask[0] * 255  # [1,s,s] -> [s,s], 0/1 -> 0/255
+            mask_img = Image.fromarray(mask.astype(np.uint8), mode='L')
+            mask_path = os.path.join(mask_dir, img_name.replace('.jpg', '.png'))
+            mask_img.save(mask_path)
+            print(f"Saved {mask_path}")
 
 if __name__ == '__main__':
-    res = 512
-    # res = 256
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--img_dir', type=str, required=True, help='图像目录路径')
+    parser.add_argument('--resolution', type=int, default=128, help='掩码分辨率')
+    args = parser.parse_args()
+
+    # 生成并保存掩码
+    save_masks(args.img_dir, args.resolution)
+
+    # 原统计代码
+    res = args.resolution
     cnt = 2000
     tot = 0
     for i in range(cnt):
         mask = RandomMask(s=res)
         tot += mask.mean()
-    print(tot / cnt)
+    print(f"Average mask value: {tot / cnt}")
