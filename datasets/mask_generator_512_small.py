@@ -82,28 +82,31 @@ def RandomMask(s, hole_range=[0,1]):
 def BatchRandomMask(batch_size, s, hole_range=[0, 1]):
     return np.stack([RandomMask(s, hole_range=hole_range) for _ in range(batch_size)], axis=0)
 
-def save_masks(img_dir, resolution):
-    # 创建masks子目录
-    mask_dir = os.path.join(img_dir, "masks")
+def save_masks(img_dir, mask_dir=None, resolution=128):
+    # 如果没有指定mask_dir，则默认在img_dir下创建masks子目录
+    if mask_dir is None:
+        mask_dir = os.path.join(img_dir, "masks")
+    
     os.makedirs(mask_dir, exist_ok=True)
     
     for img_name in os.listdir(img_dir):
-        if img_name.endswith('.jpg'):
+        if img_name.endswith('.jpg') or img_name.endswith('.png'):
             mask = RandomMask(s=resolution)
             mask = mask[0] * 255  # [1,s,s] -> [s,s], 0/1 -> 0/255
             mask_img = Image.fromarray(mask.astype(np.uint8), mode='L')
-            mask_path = os.path.join(mask_dir, img_name.replace('.jpg', '.png'))
+            mask_path = os.path.join(mask_dir, os.path.splitext(img_name)[0] + '.png')
             mask_img.save(mask_path)
             print(f"Saved {mask_path}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--img_dir', type=str, required=True, help='图像目录路径')
+    parser.add_argument('--mask_dir', type=str, help='掩码保存目录路径，默认为img_dir/masks')
     parser.add_argument('--resolution', type=int, default=128, help='掩码分辨率')
     args = parser.parse_args()
 
     # 生成并保存掩码
-    save_masks(args.img_dir, args.resolution)
+    save_masks(args.img_dir, args.mask_dir, args.resolution)
 
     # 原统计代码
     res = args.resolution
