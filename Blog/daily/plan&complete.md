@@ -11,3 +11,6 @@
   1. 跑小规模训练（PASCAL VOC 10张），观察损失和补全效果。
   2. 继续读`train.py`和`data/dataset.py`，理解训练和数据加载。
   3. 准备DeepLabv3，为语义加权损失和自适应掩码做准备。
+## 4.20
+- 下载了PASCAL VOC 2012数据集，准备开始训练。
+- 改mask_generator_512_small.py，生成10+5张掩码，test_masks.py验证（128x128，0/255）。

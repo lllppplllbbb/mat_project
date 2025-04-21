@@ -96,3 +96,11 @@
 - PASCAL VOC 2012：http://host.robots.ox.ac.uk/pascal/VOC/voc2012/
 - DeepLabv3预训练模型：https://pytorch.org/vision/stable/models.html
 - 预训练模型下载：OneDrive链接（见MAT仓库README）
+
+
+## PASCAL VOC 2012 数据集说明
+- JPEGImages：存原始图像（.jpg），是我们要用的主要数据，比如风景、文物等。
+- ImageSets：存图像列表（.txt），分训练、验证、测试集，帮你挑哪些图用。
+- Annotations：存目标检测的XML标注（bounding box），补全任务用不到，暂时忽略。
+- SegmentationClass：存语义分割标注（.png），每个像素标了类别（比如人、树），后续做语义引导掩码会用到。
+- SegmentationObject：存实例分割标注（区分不同对象），补全任务用不到，暂时忽略。

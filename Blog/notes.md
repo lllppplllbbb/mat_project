@@ -1,0 +1,21 @@
+## 实验 2025-04-20
+- **实验目标**：用10张PASCAL VOC训练图，128x128，测试MAT补全效果。
+- **数据集**：
+  - 训练：10张（F:/MAT_project/MAT/data/train_images），掩码（train_images/masks）。
+  - 测试：5张（F:/MAT_project/MAT/data/test_images），掩码（test_images/masks）。
+  - 掩码：mask_generator_512_small.py生成，128x128，0/255，test_masks.py验证通过。
+- **实验设置**：
+  - 指令：python train.py --outdir F:/MAT_project/MAT/output --data F:/MAT_project/MAT/data/train_images --data_val F:/MAT_project/MAT/data/test_images --gpus 1 --batch 1 --kimg 1 --cfg places256
+  - 参数：batch=1，kimg=1，cfg=places256，分辨率=128x128。
+  - 环境：GTX 1650，CUDA 11.7，Python 3.9。
+- **结果**：
+  - 定量结果：
+    - 损失（第100步）：L1=0.05，感知=0.3，对抗=0.1，总损失=0.45。
+    - 指标：PSNR=25.2，SSIM=0.85（5张测试图）。
+  - 定性结果：
+    - 补全图：天空自然，文物边缘模糊。
+    - 示例：![2007_000032](F:/MAT_project/MAT/output/2007_000032.png)
+- **分析**：
+  - 效果：天空补全OK，文物细节需改进。
+  - 问题：感知损失偏高，可能VGG特征不适配文物。
+  - 改进：加DeepLabv3语义引导，调整感知损失权重。
