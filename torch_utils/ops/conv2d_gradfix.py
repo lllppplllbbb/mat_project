@@ -50,8 +50,19 @@ def _should_use_custom_op(input):
         return False
     if input.device.type != 'cuda':
         return False
-    if any(torch.__version__.startswith(x) for x in ['1.7.', '1.8.', '1.9']):
+    
+    # 修改这部分以支持更新版本的PyTorch
+    version = torch.__version__.split('.')
+    major, minor = int(version[0]), int(version[1])
+    
+    # 对于PyTorch 1.7, 1.8, 1.9版本使用自定义操作
+    if major == 1 and 7 <= minor <= 9:
         return True
+    
+    # 对于PyTorch 2.0及以上版本，使用内置功能
+    if major >= 2 or (major == 1 and minor >= 10):
+        return False
+    
     warnings.warn(f'conv2d_gradfix not supported on PyTorch {torch.__version__}. Falling back to torch.nn.functional.conv2d().')
     return False
 
