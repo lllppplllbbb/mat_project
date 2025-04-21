@@ -130,3 +130,5 @@ dmypy.json
 
 # 忽略 data 文件夹下的所有文件
 data/
+output/
+mat_env/
