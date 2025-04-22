@@ -43,7 +43,7 @@ class Dataset(torch.utils.data.Dataset):
         self._use_labels = use_labels
         self._raw_labels = None
         self._label_shape = None
-        self.resolution = resolution
+        self._resolution = resolution  # 修改为使用_resolution作为私有属性
     
 
         # Apply max_size.
@@ -132,9 +132,15 @@ class Dataset(torch.utils.data.Dataset):
 
     @property
     def resolution(self):
+        if hasattr(self, "_resolution") and self._resolution is not None:
+            return self._resolution
         assert len(self.image_shape) == 3 # CHW
         assert self.image_shape[1] == self.image_shape[2]
         return self.image_shape[1]
+        
+    @resolution.setter
+    def resolution(self, value):
+        self._resolution = value
 
     @property
     def label_shape(self):
