@@ -2,14 +2,31 @@
 ```bash
 mat_env\Scripts\activate
 ```
+
+
 - 生成文件夹下文件名称
 ```bash
-Get-ChildItem -Path f:\MAT_project -Recurse -File | Where-Object { $_.FullName -notmatch '\\mat_env\\' -and $_.FullName -notmatch '\\Blog\\' } | Select-Object -ExpandProperty FullName > project_framework.txt
+Get-ChildItem -Path f:\MAT_project -Recurse -File | Where-Object { $_.FullName -notmatch '\\mat_env\\' -and $_.FullName -notmatch '\\data\\' } | Select-Object -ExpandProperty FullName > project_framework.txt
+```
+
 - 更新requirements.txt
 ```bash
 pip freeze > requirements.txt
 ```
 
+- 清除pycache
+```powershell
+Get-ChildItem "F:\MAT_project" -Include "*.pyc","__pycache__" -Recurse | Remove-Item -Force -Recurse
+```
+
+```cmd
+cmd /c "del /s /q F:\MAT_project\*.pyc && for /d /r F:\MAT_project\ %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d""
+```
+
+
+
+- 生成mask
+```bash
 - 训练文件说明（train.py）
 ```
 --data：训练数据集目录（必填），对应图像文件夹（如F:/MAT_project/MAT/data/train_images）。
