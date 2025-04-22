@@ -16,6 +16,7 @@ import torch
 import dnnlib
 import random
 import glob  # 添加这一行导入glob模块
+from .mask_generator_512 import RandomMask
 
 try:
     import pyspng
