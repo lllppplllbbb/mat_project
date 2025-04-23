@@ -67,6 +67,7 @@ def named_params_and_buffers(module):
 @click.option('--trunc', 'truncation_psi', type=float, help='Truncation psi', default=1, show_default=True)
 @click.option('--noise-mode', help='Noise mode', type=click.Choice(['const', 'random', 'none']), default='const', show_default=True)
 @click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR')
+@click.option('--batch', is_flag=True, help='Process all images in the directory')
 def generate_images(
     ctx: click.Context,
     network_pkl: str,
@@ -76,6 +77,7 @@ def generate_images(
     truncation_psi: float,
     noise_mode: str,
     outdir: str,
+    batch: bool,
 ):
     """
     Generate images using pretrained network pickle.
@@ -86,14 +88,6 @@ def generate_images(
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
 
-    print(f'Loading data from: {dpath}')
-    img_list = sorted(glob.glob(dpath + '/*.png') + glob.glob(dpath + '/*.jpg'))
-
-    if mpath is not None:
-        print(f'Loading mask from: {mpath}')
-        mask_list = sorted(glob.glob(mpath + '/*.png') + glob.glob(mpath + '/*.jpg'))
-        assert len(img_list) == len(mask_list), 'illegal mapping'
-
     print(f'Loading networks from: {network_pkl}')
     device = torch.device('cuda')
     with dnnlib.util.open_url(network_pkl) as f:
@@ -102,51 +96,83 @@ def generate_images(
     copy_params_and_buffers(G_saved, G, require_all=True)
 
     os.makedirs(outdir, exist_ok=True)
-
-    # no Labels.
     label = torch.zeros([1, G.c_dim], device=device)
 
-    def read_image(image_path):
-        with open(image_path, 'rb') as f:
-            if pyspng is not None and image_path.endswith('.png'):
-                image = pyspng.load(f.read())
-            else:
-                image = np.array(PIL.Image.open(f))
-        if image.ndim == 2:
-            image = image[:, :, np.newaxis] # HW => HWC
-            image = np.repeat(image, 3, axis=2)
-        image = image.transpose(2, 0, 1) # HWC => CHW
-        image = image[:3]
-        return image
+    # 处理单张图片或批量处理
+    if batch:
+        print(f'Loading data from: {dpath}')
+        img_list = sorted(glob.glob(dpath + '/*.png') + glob.glob(dpath + '/*.jpg'))
+        
+        if mpath is not None:
+            print(f'Loading mask from: {mpath}')
+            mask_list = sorted(glob.glob(mpath + '/*.png') + glob.glob(mpath + '/*.jpg'))
+            assert len(img_list) == len(mask_list), 'illegal mapping'
+            
+        with torch.no_grad():
+            for i, ipath in enumerate(img_list):
+                iname = os.path.basename(ipath)
+                print(f'Processing: {iname}')
+                image = read_image(ipath)
+                image = (torch.from_numpy(image).float().to(device) / 127.5 - 1).unsqueeze(0)
 
-    def to_image(image, lo, hi):
-        image = np.asarray(image, dtype=np.float32)
-        image = (image - lo) * (255 / (hi - lo))
-        image = np.rint(image).clip(0, 255).astype(np.uint8)
-        image = np.transpose(image, (1, 2, 0))
-        if image.shape[2] == 1:
-            image = np.repeat(image, 3, axis=2)
-        return image
+                if mpath is not None:
+                    mask = cv2.imread(mask_list[i], cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0
+                    mask = torch.from_numpy(mask).float().to(device).unsqueeze(0).unsqueeze(0)
+                else:
+                    mask = RandomMask(resolution) # adjust the masking ratio by using 'hole_range'
+                    mask = torch.from_numpy(mask).float().to(device).unsqueeze(0)
 
-    with torch.no_grad():
-        for i, ipath in enumerate(img_list):
-            iname = os.path.basename(ipath).replace('.jpg', '.png')
-            print(f'Prcessing: {iname}')
-            image = read_image(ipath)
-            image = (torch.from_numpy(image).float().to(device) / 127.5 - 1).unsqueeze(0)
-
-            if mpath is not None:
-                mask = cv2.imread(mask_list[i], cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0
-                mask = torch.from_numpy(mask).float().to(device).unsqueeze(0).unsqueeze(0)
-            else:
-                mask = RandomMask(resolution) # adjust the masking ratio by using 'hole_range'
-                mask = torch.from_numpy(mask).float().to(device).unsqueeze(0)
-
-            z = torch.from_numpy(np.random.randn(1, G.z_dim)).to(device)
+                z = torch.from_numpy(np.random.randn(1, G.z_dim)).to(device)
+                output = G(image, mask, z, label, truncation_psi=truncation_psi, noise_mode=noise_mode)
+                output = (output.permute(0, 2, 3, 1) * 127.5 + 127.5).round().clamp(0, 255).to(torch.uint8)
+                output = output[0].cpu().numpy()
+                outpath = f'{outdir}/{iname}'
+                print(f'Saving image to {outpath}')
+                PIL.Image.fromarray(output, 'RGB').save(outpath)
+    else:
+        # 处理单张图片
+        print(f'Processing single image: {dpath}')
+        iname = os.path.basename(dpath)
+        image = read_image(dpath, resize_to=resolution)
+        image = (torch.from_numpy(image).float().to(device) / 127.5 - 1).unsqueeze(0)
+        
+        if mpath:
+            print(f'Loading mask from: {mpath}')
+            mask = cv2.imread(mpath, cv2.IMREAD_GRAYSCALE)
+            mask = cv2.resize(mask, (resolution, resolution), interpolation=cv2.INTER_NEAREST)
+            mask = mask.astype(np.float32) / 255.0
+            mask = torch.from_numpy(mask).float().to(device).unsqueeze(0).unsqueeze(0)
+        else:
+            mask = RandomMask(resolution)
+            mask = torch.from_numpy(mask).float().to(device).unsqueeze(0)
+            
+        z = torch.from_numpy(np.random.randn(1, G.z_dim)).to(device)
+        with torch.no_grad():
             output = G(image, mask, z, label, truncation_psi=truncation_psi, noise_mode=noise_mode)
             output = (output.permute(0, 2, 3, 1) * 127.5 + 127.5).round().clamp(0, 255).to(torch.uint8)
             output = output[0].cpu().numpy()
-            PIL.Image.fromarray(output, 'RGB').save(f'{outdir}/{iname}')
+            outpath = f'{outdir}/{iname}'
+            print(f'Saving image to {outpath}')
+            PIL.Image.fromarray(output, 'RGB').save(outpath)
+
+def read_image(image_path, resize_to=None):
+    with open(image_path, 'rb') as f:
+        if pyspng is not None and image_path.endswith('.png'):
+            image = pyspng.load(f.read())
+        else:
+            image = PIL.Image.open(f)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            image = np.array(image)
+    if image.ndim == 2:
+        image = image[:, :, np.newaxis]
+        image = np.repeat(image, 3, axis=2)
+    if resize_to:
+        image = PIL.Image.fromarray(image).resize((resize_to, resize_to), PIL.Image.LANCZOS)
+        image = np.array(image)
+    image = image.transpose(2, 0, 1)
+    image = image[:3]
+    return image
 
 
 if __name__ == "__main__":
