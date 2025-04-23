@@ -93,6 +93,8 @@ class Dataset(torch.utils.data.Dataset):
         return self._raw_idx.size
 
     def _load_mask(self, mpath=None):
+        # 添加调试信息
+        print(f"[DEBUG] 加载掩码，路径: {mpath if mpath else '默认路径'}")
         # 添加安全检查
         if not hasattr(self, '_path'):
             return
@@ -102,6 +104,7 @@ class Dataset(torch.utils.data.Dataset):
             raise IOError(f'No mask files found in {mpath}')
 
     def __getitem__(self, idx):
+        idx = idx % len(self._raw_idx)  # 添加这一行来循环索引
         image = self._load_raw_image(self._raw_idx[idx])
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
@@ -192,14 +195,17 @@ class Dataset(torch.utils.data.Dataset):
 class ImageFolderMaskDataset(Dataset):
     def __init__(self,
         path,                   # Path to directory or zip.
-        resolution      = 128, # Ensure specific resolution, None = highest available.
+        resolution      = 512,  # Ensure specific resolution, None = highest available.
         hole_range=[0,1],
         **super_kwargs,         
     ):
         self._path = path
         self._zipfile = None
         self._hole_range = hole_range
-
+        
+        # 添加调试信息
+        print(f"[DEBUG] 初始化数据集，路径: {path}, 分辨率: {resolution}")
+        
         if os.path.isdir(self._path):
             self._type = 'dir'
             self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}

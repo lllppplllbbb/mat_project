@@ -29,7 +29,7 @@ class Dataset(torch.utils.data.Dataset):
     def __init__(
         self,
         name,                   # Name of the dataset.
-        resolution=128,         # Resolution of the images.
+        resolution=512,         # Resolution of the images.
         raw_shape=None,         # Shape of the raw image data (NCHW).
         hole_range=[0,1],       # 修正参数位置并添加逗号
         max_size    = None,     # Artificially limit the size of the dataset. None = no limit. Applied before xflip.
@@ -172,7 +172,7 @@ class Dataset(torch.utils.data.Dataset):
 class ImageFolderMaskDataset(Dataset):
     def __init__(self,
         path,                   # Path to directory or zip.
-        resolution      = 128, # Ensure specific resolution, None = highest available.
+        resolution      = 512, # Ensure specific resolution, None = highest available.
         hole_range=[0,1],
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
