@@ -7,7 +7,7 @@ def test_masks(img_dir):
     """
     测试掩码图片是否符合要求：
     1. .png格式
-    2. 128*128分辨率
+    2. 512*512分辨率
     3. 像素值为0或255
     """
     mask_dir = os.path.join(img_dir, "masks")
@@ -32,8 +32,8 @@ def test_masks(img_dir):
             mask_array = np.array(mask)
             
             # 检查分辨率
-            if mask_array.shape != (128, 128):
-                print(f"错误：{mask_file} 分辨率不是128*128，实际为 {mask_array.shape}")
+            if mask_array.shape != (512, 512):
+                print(f"错误：{mask_file} 分辨率不是512*512，实际为 {mask_array.shape}")
                 all_valid = False
                 continue
             
@@ -53,7 +53,7 @@ def test_masks(img_dir):
             all_valid = False
     
     if all_valid:
-        print("测试通过！所有掩码文件都符合要求：.png格式，128*128分辨率，像素值为0或255")
+        print("测试通过！所有掩码文件都符合要求：.png格式，512*512分辨率，像素值为0或255")
     else:
         print("测试失败！部分掩码文件不符合要求")
     
@@ -77,9 +77,8 @@ def visualize_random_masks(mask_dir, mask_files, num=4):
         plt.axis('off')
     
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(mask_dir), "mask_samples.png"))
-    plt.close()
-    print(f"已保存随机掩码样本图片到 {os.path.join(os.path.dirname(mask_dir), 'mask_samples.png')}")
+    plt.show()
+    print(f"已显示随机掩码样本")
 
 if __name__ == "__main__":
     # 测试训练图像的掩码

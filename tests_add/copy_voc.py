@@ -16,10 +16,10 @@ with open(os.path.join(voc_root, "ImageSets/Main/train.txt"), "r") as f:
 with open(os.path.join(voc_root, "ImageSets/Main/val.txt"), "r") as f:
     val_list = f.read().splitlines()
 
-# 复制训练图和分割图，直到够10张
+# 复制训练图和分割图，直到够200张
 train_copied = 0
 for name in train_list:
-    if train_copied >= 10:
+    if train_copied >= 200:
         break
     img_path = os.path.join(voc_root, "JPEGImages", f"{name}.jpg")
     seg_path = os.path.join(voc_root, "SegmentationClass", f"{name}.png")
@@ -27,20 +27,20 @@ for name in train_list:
         shutil.copy(img_path, train_img_dir)
         shutil.copy(seg_path, train_seg_dir)
         train_copied += 1
-        print(f"已复制训练图片 {train_copied}/10: {name}")
+        print(f"已复制训练图片 {train_copied}/200: {name}")      #需变换数量
     else:
         print(f"跳过：{name}，因图片或分割标注不存在。")
 
-# 复制测试图，直到够5张
+# 复制测试图，直到够50张
 test_copied = 0
 for name in val_list:
-    if test_copied >= 5:
+    if test_copied >= 50:
         break
     img_path = os.path.join(voc_root, "JPEGImages", f"{name}.jpg")
     if os.path.exists(img_path):
         shutil.copy(img_path, test_img_dir)
         test_copied += 1
-        print(f"已复制测试图片 {test_copied}/5: {name}")
+        print(f"已复制测试图片 {test_copied}/50: {name}")       #需变换数量
     else:
         print(f"跳过：{name}，因图片不存在。")
 
