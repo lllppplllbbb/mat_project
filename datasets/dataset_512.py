@@ -1,4 +1,6 @@
-﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+
+
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -16,7 +18,7 @@ import torch
 import dnnlib
 import random
 import glob  # 添加这一行导入glob模块
-from .mask_generator_512 import RandomMask
+from datasets.mask_generator_512 import RandomMask
 
 try:
     import pyspng
@@ -109,21 +111,55 @@ class Dataset(torch.utils.data.Dataset):
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
         assert image.dtype == np.uint8
+        
+        # 获取随机裁剪的位置（用于后续掩码和分割图的一致裁剪）
+        res = self.resolution
+        H, W = image.shape[1], image.shape[2]
+        h = random.randint(0, H - res) if H > res else 0
+        w = random.randint(0, W - res) if W > res else 0
+        
         if self._xflip[idx]:
             assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
             
-        # 检查是否有足够的掩码文件
+        # 优先使用预生成的掩码文件
         if hasattr(self, 'masks') and len(self.masks) > 0:
-            # 确保索引在范围内
             mask_idx = idx % len(self.masks)
-            mask = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :] / 255.0
+            mask_img = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)
+            
+            # 如果掩码尺寸与图像不同，需要调整
+            if mask_img.shape[0] != H or mask_img.shape[1] != W:
+                mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
+                
+            # 应用与图像相同的随机裁剪
+            mask_img = mask_img[h:h+res, w:w+res]
+            mask = mask_img[np.newaxis, :, :] / 255.0
+            
+            if self._xflip[idx]:
+                mask = mask[:, :, ::-1]
         else:
             # 如果没有掩码文件，使用RandomMask生成
-             raise IOError('No masks available for training')
+            mask = RandomMask(image.shape[-1], hole_range=self._hole_range)
+        
+        # 获取分割图（如果有）
+        if hasattr(self, 'segs') and len(self.segs) > 0:
+            seg_idx = idx % len(self.segs)
+            seg_img = cv2.imread(self.segs[seg_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)
             
-        return image.copy(), mask, self.get_label(idx)
-        # return image.copy(), self.get_label(idx)
+            # 如果分割图尺寸与图像不同，需要调整
+            if seg_img.shape[0] != H or seg_img.shape[1] != W:
+                seg_img = cv2.resize(seg_img, (W, H), interpolation=cv2.INTER_NEAREST)
+                
+            # 应用与图像相同的随机裁剪
+            seg_img = seg_img[h:h+res, w:w+res]
+            seg = seg_img[np.newaxis, :, :]
+            
+            if self._xflip[idx]:
+                seg = seg[:, :, ::-1]
+            return image.copy(), mask, seg, self.get_label(idx)
+        else:
+            # 如果没有分割图，返回原来的三个值
+            return image.copy(), mask, self.get_label(idx)
 
     def get_label(self, idx):
         label = self._get_raw_labels()[self._raw_idx[idx]]
@@ -160,10 +196,6 @@ class Dataset(torch.utils.data.Dataset):
         assert len(self.image_shape) == 3 # CHW
         assert self.image_shape[1] == self.image_shape[2]
         return self.image_shape[1]
-        
-    @resolution.setter
-    def resolution(self, value):
-        self._resolution = value
 
     @property
     def label_shape(self):
@@ -195,17 +227,17 @@ class Dataset(torch.utils.data.Dataset):
 class ImageFolderMaskDataset(Dataset):
     def __init__(self,
         path,                   # Path to directory or zip.
-        resolution      = 512,  # Ensure specific resolution, None = highest available.
+        resolution      = None, # Ensure specific resolution, None = highest available.
         hole_range=[0,1],
-        **super_kwargs,         
+        seg_dir=None,
+        **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self._path = path
         self._zipfile = None
         self._hole_range = hole_range
-        
-        # 添加调试信息
-        print(f"[DEBUG] 初始化数据集，路径: {path}, 分辨率: {resolution}")
-        
+        self._seg_dir = seg_dir or os.path.join(path, 'segmentations')
+
+
         if os.path.isdir(self._path):
             self._type = 'dir'
             self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}
@@ -221,13 +253,19 @@ class ImageFolderMaskDataset(Dataset):
             raise IOError('No image files found in the specified path')
 
         name = os.path.splitext(os.path.basename(self._path))[0]
-        raw_shape = [len(self._image_fnames)] + [3, resolution, resolution]
-        super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, **super_kwargs)
+        raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
+        if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
+            raise IOError('Image files do not match the specified resolution')
+        super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, hole_range=hole_range, **super_kwargs)
         self._load_mask()
-        # raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
-        # if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
-        #     raise IOError('Image files do not match the specified resolution')
-        # super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
+        self._load_seg()
+
+    def _load_seg(self):
+        print(f"[DEBUG] 加载分割图，路径: {self._seg_dir}")
+        self.segs = sorted(glob.glob(os.path.join(self._seg_dir, '*.png')))
+        if len(self.segs) == 0:
+            print(f"警告: {self._seg_dir} 中未找到分割图像")
+
 
     @staticmethod
     def _file_ext(fname):
@@ -271,8 +309,7 @@ class ImageFolderMaskDataset(Dataset):
             image = np.repeat(image, 3, axis=2)
 
         # restricted to 512x512
-        # res = 512
-        res = self.resolution
+        res = 512
         H, W, C = image.shape
         if H < res or W < res:
             top = 0
@@ -303,26 +340,19 @@ class ImageFolderMaskDataset(Dataset):
         labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
         return labels
 
-    def __getitem__(self, idx):
-        image = self._load_raw_image(self._raw_idx[idx])
-
-        assert isinstance(image, np.ndarray)
-        assert list(image.shape) == self.image_shape
-        assert image.dtype == np.uint8
-        if self._xflip[idx]:
-            assert image.ndim == 3 # CHW
-            image = image[:, :, ::-1]
-        mask = RandomMask(image.shape[-1], hole_range=self._hole_range)  # hole as 0, reserved as 1
-        return image.copy(), mask, self.get_label(idx)
-
 
 if __name__ == '__main__':
     res = 512
-    dpath = '/data/liwenbo/datasets/Places365/standard/val_large'
+    # 修改为适合Windows环境的路径
+    dpath = 'F:/MAT_project/MAT/data/train_images'
     D = ImageFolderMaskDataset(path=dpath)
-    print(D.__len__())
-    for i in range(D.__len__()):
-        print(i)
-        a, b, c = D.__getitem__(i)
+    print(f"数据集大小: {D.__len__()}")
+    try:
+        # 测试第一个样本
+        print("测试第一个样本...")
+        a, b, c = D.__getitem__(0)
+        print(f"图像形状: {a.shape}, 掩码形状: {b.shape}")
         if a.shape != (3, 512, 512):
-            print(i, a.shape)
+            print(f"警告: 图像形状不是 (3, 512, 512), 而是 {a.shape}")
+    except Exception as e:
+        print(f"测试失败: {e}")

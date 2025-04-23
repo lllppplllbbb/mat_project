@@ -94,13 +94,29 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         image = self._load_raw_image(self._raw_idx[idx])
+
+        # for grayscale image
+        if image.shape[0] == 1:
+            image = np.repeat(image, 3, axis=0)
+
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
         assert image.dtype == np.uint8
+        
+        # 使用独立的索引，确保掩码和分割图正确对应
+        mask_idx = idx % len(self.masks)
+        seg_idx = idx % len(self.segs)  # 修改：使用独立的seg_idx
+        
+        mask = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :] / 255.0
+        seg = cv2.imread(self.segs[seg_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :]
+        
         if self._xflip[idx]:
             assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
-        return image.copy(), self.get_label(idx)
+            mask = mask[:, :, ::-1]
+            seg = seg[:, :, ::-1]
+            
+        return image.copy(), mask, seg, self.get_label(idx)
 
     def get_label(self, idx):
         label = self._get_raw_labels()[self._raw_idx[idx]]
@@ -172,8 +188,9 @@ class Dataset(torch.utils.data.Dataset):
 class ImageFolderMaskDataset(Dataset):
     def __init__(self,
         path,                   # Path to directory or zip.
-        resolution      = 512, # Ensure specific resolution, None = highest available.
+        resolution      = 512,  # Ensure specific resolution, None = highest available.
         hole_range=[0,1],
+        seg_dir=None,
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self._path = path
@@ -193,11 +210,13 @@ class ImageFolderMaskDataset(Dataset):
         self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
         if len(self._image_fnames) == 0:
             raise IOError('No image files found in the specified path')
-
+        self._seg_dir = seg_dir or os.path.join(path, 'segmentations')
         name = os.path.splitext(os.path.basename(self._path))[0]
         raw_shape = [len(self._image_fnames)] + [3, resolution, resolution]
         super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, **super_kwargs)
         self._load_mask()
+        self._load_seg()
+        
         # raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
         # if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
         #     raise IOError('Image files do not match the specified resolution')
@@ -210,6 +229,11 @@ class ImageFolderMaskDataset(Dataset):
         self.masks = sorted(glob.glob(os.path.join(mpath, '*.png')))
         if len(self.masks) == 0:
             raise IOError(f'No mask files found in {mpath}')
+            
+    def _load_seg(self):
+        self.segs = sorted(glob.glob(os.path.join(self._seg_dir, '*.png')))
+        if len(self.segs) == 0:
+            raise IOError(f'No segmentation files found in {self._seg_dir}')
 
     @staticmethod
     def _file_ext(fname):
@@ -283,22 +307,3 @@ class ImageFolderMaskDataset(Dataset):
         labels = np.array(labels)
         labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
         return labels
-
-    def __getitem__(self, idx):
-        image = self._load_raw_image(self._raw_idx[idx])
-
-        # for grayscale image
-        if image.shape[0] == 1:
-            image = np.repeat(image, 3, axis=0)
-
-        assert isinstance(image, np.ndarray)
-        assert list(image.shape) == self.image_shape
-        assert image.dtype == np.uint8
-        if self._xflip[idx]:
-            assert image.ndim == 3 # CHW
-            image = image[:, :, ::-1]
-        mask_idx = idx % len(self.masks)
-        mask = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :] / 255.0
-        # mask = RandomMask(image.shape[-1], hole_range=self._hole_range)  # hole as 0, reserved as 1
-        # mask = cv2.imread(self.masks[idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :] / 255.0
-        return image.copy(), mask, self.get_label(idx)
