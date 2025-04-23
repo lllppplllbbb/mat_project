@@ -129,9 +129,9 @@ def setup_training_loop_kwargs(
         dataloader = 'datasets.dataset_512.ImageFolderMaskDataset'
 
     args.training_set_kwargs = dnnlib.EasyDict(class_name=dataloader, path=data,
-                                               use_labels=True, max_size=None, xflip=False)
+                                               use_labels=True, max_size=None, xflip=False, seg_dir=os.path.join(data, '../segmentations/train'))
     args.val_set_kwargs = dnnlib.EasyDict(class_name=dataloader, path=data_val,
-                                          use_labels=True, max_size=None, xflip=False)
+                                          use_labels=True, max_size=None, xflip=False,seg_dir=os.path.join(data, '../segmentations/test'))
     args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
 
     try:
@@ -662,3 +662,23 @@ val_set_kwargs = dict(DATA_PATHS['val_data'], path=DATA_PATHS['val_data'])
 # 根据DEBUG标志控制调试信息
 if DEBUG:
     print("[DEBUG] 使用调试模式运行训练")
+
+# 在training_loop.py文件中的training_loop函数中，修改数据加载部分
+def training_loop(
+    rank, **args
+):
+    # 在加载数据的地方，确保加载分割图像
+    for batch_idx, batch in enumerate(training_set_iterator):
+        # 解包批次数据，现在包括分割图像
+        real_img, mask, seg_map, real_c = batch
+        real_img = real_img.to(device).to(torch.float32) / 127.5 - 1
+        mask = mask.to(device)
+        seg_map = seg_map.to(device)  # 加载分割图像
+        real_c = real_c.to(device)
+        
+        # 在调用loss_Gmain时传递seg_map
+        loss_Gmain = module_G.training.loss.accumulate_gradients(phase='Gmain', real_img=real_img, mask=mask, 
+                                                                real_c=real_c, gen_z=gen_z, gen_c=gen_c, 
+                                                                sync=sync, gain=gain, seg_map=seg_map)  # 添加seg_map参数
+        
+        # ... existing code ...
