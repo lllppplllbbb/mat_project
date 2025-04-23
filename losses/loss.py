@@ -87,6 +87,9 @@ class TwoStageLoss(Loss):
                 training_stats.report('Loss/G/l1_loss', l1_loss)
                 pcp_loss, _ = self.pcp(gen_img, real_img)
                 training_stats.report('Loss/G/pcp_loss', pcp_loss)
+            # 添加调试信息
+            print(f"[DEBUG] 损失信息 - L1: {l1_loss.item():.4f}, 感知损失: {pcp_loss.item():.4f}")
+            
             with torch.autograd.profiler.record_function('Gmain_backward'):
                 loss_Gmain_all = loss_Gmain + loss_Gmain_stg1 + pcp_loss * self.pcp_ratio
                 loss_Gmain_all.mean().mul(gain).backward()

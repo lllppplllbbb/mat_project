@@ -1,12 +1,5 @@
-﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
-#
-# NVIDIA CORPORATION and its licensors retain all intellectual property
-# and proprietary rights in and to this software, related documentation
-# and any modifications thereto.  Any use, reproduction, disclosure or
-# distribution of this software and related documentation without an express
-# license agreement from NVIDIA CORPORATION is strictly prohibited.
-
-import os
+﻿import os
+import sys
 import time
 import copy
 import json
@@ -23,6 +16,7 @@ from torch_utils.ops import grid_sample_gradfix
 
 import legacy
 from metrics import metric_main
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 #----------------------------------------------------------------------------
 
@@ -88,7 +82,7 @@ def save_image_grid(img, fname, drange, grid_size):
 def training_loop(
     run_dir                 = '.',      # Output directory.
     training_set_kwargs     = {},       # Options for training set.
-    val_set_kwargs          = {},
+    val_set_kwargs          = {},       # Options for validation set.
     data_loader_kwargs      = {},       # Options for torch.utils.data.DataLoader.
     G_kwargs                = {},       # Options for generator network.
     D_kwargs                = {},       # Options for discriminator network.
@@ -462,3 +456,15 @@ def training_loop(
         print('Exiting...')
 
 #----------------------------------------------------------------------------
+
+    # 添加调试信息
+    print(f"[DEBUG] 开始训练循环，训练集: {training_set_kwargs.get('path', 'unknown')}, 验证集: {val_set_kwargs.get('path', 'unknown')}")
+    
+    # ... existing code ...
+    
+    # 在tick结束时添加打印
+    for tick_idx in range(total_ticks):
+        # ... existing code ...
+        
+        # 在tick结束时添加调试信息
+        print(f"[DEBUG] 完成训练tick {tick_idx+1}/{total_ticks}, 进度: {(tick_idx+1)/total_ticks*100:.1f}%")
