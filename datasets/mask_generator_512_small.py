@@ -102,7 +102,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--img_dir', type=str, required=True, help='图像目录路径')
     parser.add_argument('--mask_dir', type=str, help='掩码保存目录路径，默认为img_dir/masks')
-    parser.add_argument('--resolution', type=int, default=128, help='掩码分辨率')
+    parser.add_argument('--resolution', type=int, default=512, help='掩码分辨率')
     args = parser.parse_args()
 
     # 生成并保存掩码
