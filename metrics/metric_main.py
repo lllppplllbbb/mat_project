@@ -181,4 +181,34 @@ def ppl_wend(opts):
     ppl = perceptual_path_length.compute_ppl(opts, num_samples=50000, epsilon=1e-4, space='w', sampling='end', crop=True, batch_size=2)
     return dict(ppl_wend=ppl)
 
+    
+#针对小数量数据集
+@register_metric
+def fid50_full(opts):
+    opts.dataset_kwargs.update(max_size=None, xflip=False)
+    fid = frechet_inception_distance.compute_fid(opts, max_real=50, num_gen=50)
+    return dict(fid50_full=fid)
+
+@register_metric
+def kid50k_full(opts):
+    opts.dataset_kwargs.update(max_size=None, xflip=False)
+    kid = kernel_inception_distance.compute_kid(opts, max_real=1000000, num_gen=50000, num_subsets=100, max_subset_size=1000)
+    return dict(kid50k_full=kid)
+
+@register_metric
+def pr50k3(opts):
+    opts.dataset_kwargs.update(max_size=None)
+    precision, recall = precision_recall.compute_pr(opts, max_real=50000, num_gen=50000, nhood_size=3, row_batch_size=10000, col_batch_size=10000)
+    return dict(pr50k3_precision=precision, pr50k3_recall=recall)
+
+@register_metric
+def ppl_zend(opts):
+    ppl = perceptual_path_length.compute_ppl(opts, num_samples=50000, epsilon=1e-4, space='z', sampling='end', crop=True, batch_size=2)
+    return dict(ppl_zend=ppl)
+
+@register_metric
+def ppl_wend(opts):
+    ppl = perceptual_path_length.compute_ppl(opts, num_samples=50000, epsilon=1e-4, space='w', sampling='end', crop=True, batch_size=2)
+    return dict(ppl_wend=ppl)
+
 #----------------------------------------------------------------------------

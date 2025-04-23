@@ -105,7 +105,8 @@ def setup_training_loop_kwargs(
     args.network_snapshot_ticks = snap
 
     if metrics is None:
-        metrics = ['fid50k_full']
+        # metrics = ['fid50k_full']
+        metrics = ['fid50_full']
     assert isinstance(metrics, list)
     if not all(metric_main.is_valid_metric(metric) for metric in metrics):
         raise UserError('\n'.join(['--metrics can only contain the following values:'] + metric_main.list_valid_metrics()))
@@ -650,3 +651,14 @@ if __name__ == "__main__":
     main() # pylint: disable=no-value-for-parameter
 
 #----------------------------------------------------------------------------
+from config import DATA_PATHS, DEBUG
+
+# 使用配置中的路径
+# 修正位置参数和关键字参数的顺序
+training_set_kwargs = dict(DATA_PATHS['train_data'], path=None)
+# 将位置参数放在关键字参数之前
+val_set_kwargs = dict(DATA_PATHS['val_data'], path=DATA_PATHS['val_data'])
+
+# 根据DEBUG标志控制调试信息
+if DEBUG:
+    print("[DEBUG] 使用调试模式运行训练")
