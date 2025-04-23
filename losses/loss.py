@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -8,6 +8,7 @@
 
 import numpy as np
 import torch
+import torch.nn.functional as F  # 添加这一行导入F
 from torch_utils import training_stats
 from torch_utils import misc
 from torch_utils.ops import conv2d_gradfix
@@ -62,7 +63,7 @@ class TwoStageLoss(Loss):
             logits, logits_stg1 = self.D(img, mask, img_stg1, c)
         return logits, logits_stg1
 
-    def accumulate_gradients(self, phase, real_img, mask, real_c, gen_z, gen_c, sync, gain):
+    def accumulate_gradients(self, phase, real_img, mask, real_c, gen_z, gen_c, sync, gain, seg_map=None):  # 添加seg_map参数
         assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
         do_Gmain = (phase in ['Gmain', 'Gboth'])
         do_Dmain = (phase in ['Dmain', 'Dboth'])
@@ -87,11 +88,21 @@ class TwoStageLoss(Loss):
                 training_stats.report('Loss/G/l1_loss', l1_loss)
                 pcp_loss, _ = self.pcp(gen_img, real_img)
                 training_stats.report('Loss/G/pcp_loss', pcp_loss)
+                
+                # 添加语义损失计算
+                sem_loss = 0
+                if seg_map is not None:
+                    sem_loss = semantic_loss(gen_img, real_img, seg_map)
+                    training_stats.report('Loss/G/semantic_loss', sem_loss)
+                
             # 添加调试信息
-            print(f"[DEBUG] 损失信息 - L1: {l1_loss.item():.4f}, 感知损失: {pcp_loss.item():.4f}")
+            print(f"[DEBUG] 损失信息 - L1: {l1_loss.item():.4f}, 感知损失: {pcp_loss.item():.4f}, 语义损失: {sem_loss.item() if seg_map is not None else 0:.4f}")
             
             with torch.autograd.profiler.record_function('Gmain_backward'):
+                # 修改总损失计算，添加语义损失
                 loss_Gmain_all = loss_Gmain + loss_Gmain_stg1 + pcp_loss * self.pcp_ratio
+                if seg_map is not None:
+                    loss_Gmain_all = loss_Gmain_all + 0.3 * sem_loss  # 权重0.3
                 loss_Gmain_all.mean().mul(gain).backward()
 
         # # Gpl: Apply path length regularization.
@@ -171,3 +182,9 @@ class TwoStageLoss(Loss):
                 ((real_logits + real_logits_stg1) * 0 + loss_Dreal + loss_Dreal_stg1 + loss_Dr1 + loss_Dr1_stg1).mean().mul(gain).backward()
 
 #----------------------------------------------------------------------------
+
+# 在适当位置添加语义损失函数
+def semantic_loss(pred, target, seg):
+    semantic_weight = seg.float()  # 分割图，值是类别（0-20）
+    l1_loss = F.l1_loss(pred * semantic_weight, target * semantic_weight)
+    return l1_loss
