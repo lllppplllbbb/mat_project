@@ -20,7 +20,9 @@ def create_zip_archive(source_dir, output_zip=None):
         'test_add', 
         '.gitignore', 
         'project_framework.txt', 
-        'README.md'
+        'README.md',
+        '.git',
+        '__pycache__',
     ]
     
     # 如果没有指定输出文件名，使用当前日期
@@ -65,10 +67,12 @@ def create_zip_archive(source_dir, output_zip=None):
     print(f"排除的文件和目录: {', '.join(exclude_list)}")
 
 if __name__ == "__main__":
-    # 获取当前脚本所在的目录作为源目录
-    source_directory = os.path.dirname(os.path.abspath(__file__))
-    create_zip_archive(source_directory)
+    # 获取MAT_project目录作为源目录（当前脚本在tests_add子目录中）
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(current_dir)  # 获取父目录，即MAT_project目录
+    create_zip_archive(project_dir)
 
 # if __name__ == "__main__":
-#     source_directory = os.path.dirname(os.path.abspath(__file__))
-#     create_zip_archive(source_directory, "自定义文件名.zip")
+#     current_dir = os.path.dirname(os.path.abspath(__file__))
+#     project_dir = os.path.dirname(current_dir)  # 获取父目录，即MAT_project目录
+#     create_zip_archive(project_dir, "自定义文件名.zip")
