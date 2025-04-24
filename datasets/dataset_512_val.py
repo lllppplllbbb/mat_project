@@ -15,6 +15,7 @@ import json
 import torch
 import dnnlib
 import glob
+import random  # 在文件顶部添加这一行
 
 try:
     import pyspng
@@ -94,29 +95,55 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         image = self._load_raw_image(self._raw_idx[idx])
-
-        # for grayscale image
         if image.shape[0] == 1:
             image = np.repeat(image, 3, axis=0)
-
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
         assert image.dtype == np.uint8
         
-        # 使用独立的索引，确保掩码和分割图正确对应
-        mask_idx = idx % len(self.masks)
-        seg_idx = idx % len(self.segs)  # 修改：使用独立的seg_idx
-        
-        mask = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :] / 255.0
-        seg = cv2.imread(self.segs[seg_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)[np.newaxis, :, :]
+        # 获取随机裁剪的位置（与训练集一致）
+        res = self.resolution
+        H, W = image.shape[1], image.shape[2]
+        h = random.randint(0, H - res) if H > res else 0
+        w = random.randint(0, W - res) if W > res else 0
         
         if self._xflip[idx]:
-            assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
+        
+        # 加载掩码
+        mask_idx = idx % len(self.masks)
+        mask_img = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE)
+        if mask_img is None:
+            raise ValueError(f"Failed to load mask: {self.masks[mask_idx]}")
+        if mask_img.shape[0] != H or mask_img.shape[1] != W:
+            mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
+        mask_img = mask_img[h:h+res, w:w+res]
+        mask = mask_img[np.newaxis, :, :] / 255.0
+        if self._xflip[idx]:
             mask = mask[:, :, ::-1]
-            seg = seg[:, :, ::-1]
-            
-        return image.copy(), mask, seg, self.get_label(idx)
+        
+        # 加载分割图
+        if hasattr(self, 'segs') and len(self.segs) > 0:
+            seg_idx = self._raw_idx[idx]  # 用图像索引
+            seg_img = cv2.imread(self.segs[seg_idx], cv2.IMREAD_GRAYSCALE)
+            if seg_img is None:
+                raise ValueError(f"Failed to load segmentation: {self.segs[seg_idx]}")
+            if seg_img.shape[0] != H or seg_img.shape[1] != W:
+                seg_img = cv2.resize(seg_img, (W, H), interpolation=cv2.INTER_NEAREST)
+            seg_img = seg_img[h:h+res, w:w+res]
+            seg_img = np.clip(seg_img, 0, 20)  # 限制到 [0, 20]
+            seg = seg_img[np.newaxis, :, :]
+            if self._xflip[idx]:
+                seg = seg[:, :, ::-1]
+        else:
+            seg = np.zeros((1, res, res), dtype=np.float32)  # 默认空分割图
+        
+        # 修复标签
+        label = self.get_label(idx)
+        if label.shape[0] == 0:
+            label = np.zeros(20, dtype=np.float32)  # 强制 (20,)
+        
+        return image.copy(), mask, seg, label
 
     def get_label(self, idx):
         label = self._get_raw_labels()[self._raw_idx[idx]]
@@ -216,24 +243,33 @@ class ImageFolderMaskDataset(Dataset):
         super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, **super_kwargs)
         self._load_mask()
         self._load_seg()
-        
-        # raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
-        # if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
-        #     raise IOError('Image files do not match the specified resolution')
-        # self._load_mask()
-        # super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
-    
-    #改验证掩码路径
     def _load_mask(self, mpath=None):
+    # 添加调试信息
+        print(f"[DEBUG] 加载掩码，路径: {mpath if mpath else '默认路径'}")
+        # 添加安全检查
+        if not hasattr(self, '_path'):
+            return
         mpath = mpath or os.path.join(self._path, 'masks')
         self.masks = sorted(glob.glob(os.path.join(mpath, '*.png')))
         if len(self.masks) == 0:
-            raise IOError(f'No mask files found in {mpath}')
-            
+            raise IOError(f'No mask files found in {mpath}')   
+
+         
     def _load_seg(self):
-        self.segs = sorted(glob.glob(os.path.join(self._seg_dir, '*.png')))
+        print(f"[DEBUG] 加载分割图，路径: {self._seg_dir}")
+        self.segs = []
+        for fname in self._image_fnames:
+            base_name = os.path.splitext(os.path.basename(fname))[0]
+            seg_path = os.path.join(self._seg_dir, f"{base_name}.png")
+            if os.path.exists(seg_path):
+                self.segs.append(seg_path)
+            else:
+                raise IOError(f"Segmentation file missing: {seg_path}")
         if len(self.segs) == 0:
-            raise IOError(f'No segmentation files found in {self._seg_dir}')
+            raise IOError(f"No segmentation files found in {self._seg_dir}")
+        assert len(self.segs) == len(self._image_fnames), f"Mismatch: {len(self.segs)} segs vs {len(self._image_fnames)} images"
+        for seg_path in self.segs[:5]:
+            print(f"[DEBUG] 分割图: {seg_path}")
 
     @staticmethod
     def _file_ext(fname):
@@ -269,30 +305,30 @@ class ImageFolderMaskDataset(Dataset):
                 image = pyspng.load(f.read())
             else:
                 image = np.array(PIL.Image.open(f))
-        if image.ndim == 2:
-            image = image[:, :, np.newaxis] # HW => HWC
+            if image.ndim == 2:
+                image = image[:, :, np.newaxis] # HW => HWC
 
-        # for grayscale image
-        if image.shape[2] == 1:
-            image = np.repeat(image, 3, axis=2)
+            # for grayscale image
+            if image.shape[2] == 1:
+                image = np.repeat(image, 3, axis=2)
 
-        # restricted to 512x512
-        # res = 512
-        res =self.resolution
-        H, W, C = image.shape
-        if H < res or W < res:
-            top = 0
-            bottom = max(0, res - H)
-            left = 0
-            right = max(0, res - W)
-            image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_REFLECT)
-        H, W, C = image.shape
-        h = (H - res) // 2
-        w = (W - res) // 2
-        image = image[h:h+res, w:w+res, :]
+            # restricted to 512x512
+            # res = 512
+            res =self.resolution
+            H, W, C = image.shape
+            if H < res or W < res:
+                top = 0
+                bottom = max(0, res - H)
+                left = 0
+                right = max(0, res - W)
+                image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_REFLECT)
+            H, W, C = image.shape
+            h = (H - res) // 2
+            w = (W - res) // 2
+            image = image[h:h+res, w:w+res, :]
 
-        image = np.ascontiguousarray(image.transpose(2, 0, 1)) # HWC => CHW
-        return image
+            image = np.ascontiguousarray(image.transpose(2, 0, 1)) # HWC => CHW
+            return image
 
     def _load_raw_labels(self):
         fname = 'labels.json'

@@ -54,8 +54,8 @@ def setup_snapshot_image_grid(training_set, random_seed=0):
             label_groups[label] = [indices[(i + gw) % len(indices)] for i in range(len(indices))]
 
     # Load data.
-    images, masks, labels = zip(*[training_set[i] for i in grid_indices])
-    return (gw, gh), np.stack(images), np.stack(masks), np.stack(labels)
+    images, masks, segs, labels = zip(*[training_set[i] for i in grid_indices])
+    return (gw, gh), np.stack(images), np.stack(masks), np.stack(segs), np.stack(labels)
 
 #----------------------------------------------------------------------------
 
@@ -244,20 +244,21 @@ def training_loop(
     grid_mask = None
     if rank == 0:
         print('Exporting sample images...')
-        grid_size, images, masks, labels = setup_snapshot_image_grid(training_set=val_set)
+        grid_size, images, masks, segs, labels = setup_snapshot_image_grid(training_set=val_set)
         save_image_grid(images, os.path.join(run_dir, 'reals.png'), drange=[0, 255], grid_size=grid_size)
         # adaptation to inpainting config
         save_image_grid(masks, os.path.join(run_dir, 'masks.png'), drange=[0, 1], grid_size=grid_size)
         # --------------------
-        grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
-        grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
-        # adaptation to inpainting config
-        grid_img = (torch.from_numpy(images).to(device) / 127.5 - 1).split(batch_gpu)  # [-1, 1]
-        grid_mask = torch.from_numpy(masks).to(device).split(batch_gpu)  # {0, 1}
-        images = torch.cat([G_ema(img_in, mask_in, z, c, noise_mode='const').cpu() \
-                            for img_in, mask_in, z, c in zip(grid_img, grid_mask, grid_z, grid_c)]).numpy()
+        grid_z = torch.randn([labels.shape[0], G.z_dim], device=device, dtype=torch.float32).split(batch_gpu)
+        grid_c = torch.from_numpy(labels).to(device, dtype=torch.float32).split(batch_gpu)
+        grid_img = (torch.from_numpy(images).to(device, dtype=torch.float32) / 127.5 - 1).split(batch_gpu)  # [-1, 1]
+        grid_mask = torch.from_numpy(masks).to(device, dtype=torch.float32).split(batch_gpu)
+        with torch.no_grad():
+            images = torch.cat([G_ema(img_in.to(torch.float32), mask_in.to(torch.float32), z, c, noise_mode='const').cpu() \
+                for img_in, mask_in, z, c in zip(grid_img, grid_mask, grid_z, grid_c)]).numpy()
         # --------------------
         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
+        save_image_grid(segs, os.path.join(run_dir, 'segs.png'), drange=[0, 255], grid_size=grid_size)
 
     # Initialize logs.
     if rank == 0:
@@ -286,21 +287,18 @@ def training_loop(
     batch_idx = 0
     if progress_fn is not None:
         progress_fn(0, total_kimg)
-    while True:
 
+    while True:
         # Fetch training data.
         with torch.autograd.profiler.record_function('data_fetch'):
-            phase_real_img, phase_mask, phase_real_c = next(training_set_iterator)
-            phase_real_img = (phase_real_img.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
-            # adaptation to inpainting config
-            phase_mask = phase_mask.to(device).to(torch.float32).split(batch_gpu)
-            # --------------------
-            phase_real_c = phase_real_c.to(device).split(batch_gpu)
+            phase_real_img, phase_real_mask, phase_real_seg, phase_real_c = next(training_set_iterator)
+            phase_real_img = phase_real_img.to(device).to(torch.float32) / 127.5 - 1
+            phase_real_mask = phase_real_mask.to(device).to(torch.float32)
+            phase_real_c = phase_real_c.to(device)
+            phase_real_seg = phase_real_seg.to(device) if hasattr(training_set, 'segs') else None
             all_gen_z = torch.randn([len(phases) * batch_size, G.z_dim], device=device)
-            all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]
-            all_gen_c = [training_set.get_label(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
-            all_gen_c = torch.from_numpy(np.stack(all_gen_c)).pin_memory().to(device)
-            all_gen_c = [phase_gen_c.split(batch_gpu) for phase_gen_c in all_gen_c.split(batch_size)]
+            all_gen_z = all_gen_z.split(batch_size)
+            all_gen_c = [phase_real_c] * len(phases)
 
         # Execute training phases.
         for phase, phase_gen_z, phase_gen_c in zip(phases, all_gen_z, all_gen_c):
@@ -314,10 +312,14 @@ def training_loop(
             phase.module.requires_grad_(True)
 
             # Accumulate gradients over multiple rounds.
-            for round_idx, (real_img, mask, real_c, gen_z, gen_c) in enumerate(zip(phase_real_img, phase_mask, phase_real_c, phase_gen_z, phase_gen_c)):
+            for round_idx, (real_img, real_mask, real_c, gen_z, gen_c) in enumerate(zip(phase_real_img.split(batch_gpu), phase_real_mask.split(batch_gpu), phase_real_c.split(batch_gpu), phase_gen_z.split(batch_gpu), phase_gen_c.split(batch_gpu))):
                 sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)
                 gain = phase.interval
-                loss.accumulate_gradients(phase=phase.name, real_img=real_img, mask=mask, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
+                
+                # Get segmentation map for this batch if available
+                seg_map = phase_real_seg.split(batch_gpu)[round_idx] if phase_real_seg is not None else None
+                
+                loss.accumulate_gradients(phase=phase.name, real_img=real_img, mask=real_mask, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain, seg_map=seg_map)
 
             # Update weights.
             phase.module.requires_grad_(False)
@@ -385,6 +387,7 @@ def training_loop(
             images = torch.cat([G_ema(img_in, mask_in, z, c, noise_mode='const').cpu() \
                                 for img_in, mask_in, z, c in zip(grid_img, grid_mask, grid_z, grid_c)]).numpy()
             save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
+            save_image_grid(segs, os.path.join(run_dir, 'segs.png'), drange=[0, 255], grid_size=grid_size)
 
         # Save network snapshot.
         snapshot_pkl = None
@@ -460,7 +463,7 @@ def training_loop(
     # 添加调试信息
     print(f"[DEBUG] 开始训练循环，训练集: {training_set_kwargs.get('path', 'unknown')}, 验证集: {val_set_kwargs.get('path', 'unknown')}")
     
-    # ... existing code ...
+    training_loop.training_loop(rank=rank, **args)
     
     # 在tick结束时添加打印
     for tick_idx in range(total_ticks):

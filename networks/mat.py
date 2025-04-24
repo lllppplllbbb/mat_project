@@ -704,6 +704,8 @@ class FirstStage(nn.Module):
         res = 64
 
         self.conv_first = Conv2dLayerPartial(in_channels=img_channels+1, out_channels=dim, kernel_size=3, activation=activation)
+        self.conv_first.conv.weight.data = self.conv_first.conv.weight.data.to(torch.float32)
+        self.conv_first.conv.bias.data = self.conv_first.conv.bias.data.to(torch.float32)
         self.enc_conv = nn.ModuleList()
         down_time = int(np.log2(img_resolution // res))
         for i in range(down_time):  # from input size to 64
@@ -751,7 +753,7 @@ class FirstStage(nn.Module):
             self.dec_conv.append(DecStyleBlock(res, dim, dim, activation, style_dim, use_noise, demodulate, img_channels))
 
     def forward(self, images_in, masks_in, ws, noise_mode='random'):
-        x = torch.cat([masks_in - 0.5, images_in * masks_in], dim=1)
+        x = torch.cat([masks_in - 0.5, images_in * masks_in], dim=1).to(torch.float32)
 
         skips = []
         x, mask = self.conv_first(x, masks_in)  # input size
@@ -797,19 +799,14 @@ class FirstStage(nn.Module):
 
 @persistence.persistent_class
 class SynthesisNet(nn.Module):
-    def __init__(self,
-                 w_dim,                     # Intermediate latent (W) dimensionality.
-                 img_resolution,            # Output image resolution.
-                 img_channels   = 3,        # Number of color channels.
-                 channel_base   = 32768,    # Overall multiplier for the number of channels.
-                 channel_decay  = 1.0,
-                 channel_max    = 512,      # Maximum number of channels in any layer.
-                 activation     = 'lrelu',  # Activation function: 'relu', 'lrelu', etc.
-                 drop_rate      = 0.5,
-                 use_noise      = True,
-                 demodulate     = True,
-                 ):
+    def __init__(self, w_dim, img_resolution, img_channels, channel_base=32768, channel_max=512):
         super().__init__()
+        self.w_dim = w_dim
+        self.img_resolution = img_resolution
+        self.img_resolution_log2 = int(np.log2(img_resolution))
+        self.img_channels = img_channels
+        self.block_resolutions = [2 ** i for i in range(2, self.img_resolution_log2 + 1)]
+        channels_dict = {res: min(channel_base // res, channel_max) for res in self.block_resolutions}
         resolution_log2 = int(np.log2(img_resolution))
         assert img_resolution == 2 ** resolution_log2 and img_resolution >= 4
 
@@ -818,14 +815,14 @@ class SynthesisNet(nn.Module):
         self.resolution_log2 = resolution_log2
 
         # first stage
-        self.first_stage = FirstStage(img_channels, img_resolution=img_resolution, w_dim=w_dim, use_noise=False, demodulate=demodulate)
+        self.first_stage = FirstStage(img_channels, img_resolution=img_resolution, w_dim=w_dim, use_noise=False, demodulate=True)
 
         # second stage
-        self.enc = Encoder(resolution_log2, img_channels, activation, patch_size=5, channels=16)
-        self.to_square = FullyConnectedLayer(in_features=w_dim, out_features=16*16, activation=activation)
-        self.to_style = ToStyle(in_channels=nf(4), out_channels=nf(2) * 2, activation=activation, drop_rate=drop_rate)
+        self.enc = Encoder(resolution_log2, img_channels, activation='lrelu', patch_size=5, channels=16)
+        self.to_square = FullyConnectedLayer(in_features=w_dim, out_features=16*16, activation='lrelu')
+        self.to_style = ToStyle(in_channels=nf(4), out_channels=nf(2) * 2, activation='lrelu', drop_rate=0.1)
         style_dim = w_dim + nf(2) * 2
-        self.dec = Decoder(resolution_log2, activation, style_dim, use_noise, demodulate, img_channels)
+        self.dec = Decoder(res_log2=resolution_log2, activation='lrelu', style_dim=style_dim, use_noise=False, demodulate=True, img_channels=img_channels)
 
     def forward(self, images_in, masks_in, ws, noise_mode='random', return_stg1=False):
         out_stg1 = self.first_stage(images_in, masks_in, ws, noise_mode=noise_mode)

@@ -57,32 +57,9 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
 
 @misc.profiled_function
 def conv2d_resample(x, w, f=None, up=1, down=1, padding=0, groups=1, flip_weight=True, flip_filter=False):
-    r"""2D convolution with optional up/downsampling.
-
-    Padding is performed only once at the beginning, not between the operations.
-
-    Args:
-        x:              Input tensor of shape
-                        `[batch_size, in_channels, in_height, in_width]`.
-        w:              Weight tensor of shape
-                        `[out_channels, in_channels//groups, kernel_height, kernel_width]`.
-        f:              Low-pass filter for up/downsampling. Must be prepared beforehand by
-                        calling upfirdn2d.setup_filter(). None = identity (default).
-        up:             Integer upsampling factor (default: 1).
-        down:           Integer downsampling factor (default: 1).
-        padding:        Padding with respect to the upsampled image. Can be a single number
-                        or a list/tuple `[x, y]` or `[x_before, x_after, y_before, y_after]`
-                        (default: 0).
-        groups:         Split input channels into N groups (default: 1).
-        flip_weight:    False = convolution, True = correlation (default: True).
-        flip_filter:    False = convolution, True = correlation (default: False).
-
-    Returns:
-        Tensor of the shape `[batch_size, num_channels, out_height, out_width]`.
-    """
-    # Validate arguments.
-    assert isinstance(x, torch.Tensor) and (x.ndim == 4)
-    assert isinstance(w, torch.Tensor) and (w.ndim == 4) and (w.dtype == x.dtype)
+    assert isinstance(x, torch.Tensor) and (x.ndim == 4), f"x type: {type(x)}, shape: {x.shape}, dtype: {x.dtype}"
+    assert isinstance(w, torch.Tensor) and (w.ndim == 4), f"w type: {type(w)}, shape: {w.shape}, dtype: {w.dtype}"
+    assert w.dtype == x.dtype, f"w.dtype: {w.dtype}, x.dtype: {x.dtype}"
     assert f is None or (isinstance(f, torch.Tensor) and f.ndim in [1, 2] and f.dtype == torch.float32)
     assert isinstance(up, int) and (up >= 1)
     assert isinstance(down, int) and (down >= 1)

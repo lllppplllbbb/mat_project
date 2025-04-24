@@ -185,6 +185,6 @@ class TwoStageLoss(Loss):
 
 # 在适当位置添加语义损失函数
 def semantic_loss(pred, target, seg):
-    semantic_weight = seg.float()  # 分割图，值是类别（0-20）
+    semantic_weight = seg.float() / 20.0  # 归一化到 [0, 1]
     l1_loss = F.l1_loss(pred * semantic_weight, target * semantic_weight)
     return l1_loss

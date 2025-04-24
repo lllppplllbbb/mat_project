@@ -104,9 +104,9 @@ class Dataset(torch.utils.data.Dataset):
         self.masks = sorted(glob.glob(os.path.join(mpath, '*.png')))
         if len(self.masks) == 0:
             raise IOError(f'No mask files found in {mpath}')
-
+        
     def __getitem__(self, idx):
-        idx = idx % len(self._raw_idx)  # 添加这一行来循环索引
+        idx = idx % len(self._raw_idx)
         image = self._load_raw_image(self._raw_idx[idx])
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
@@ -125,16 +125,15 @@ class Dataset(torch.utils.data.Dataset):
         # 优先使用预生成的掩码文件
         if hasattr(self, 'masks') and len(self.masks) > 0:
             mask_idx = idx % len(self.masks)
-            mask_img = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)
-            
+            mask_img = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE)
+            if mask_img is None:
+                raise ValueError(f"Failed to load mask: {self.masks[mask_idx]}")
             # 如果掩码尺寸与图像不同，需要调整
             if mask_img.shape[0] != H or mask_img.shape[1] != W:
                 mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
-                
             # 应用与图像相同的随机裁剪
             mask_img = mask_img[h:h+res, w:w+res]
             mask = mask_img[np.newaxis, :, :] / 255.0
-            
             if self._xflip[idx]:
                 mask = mask[:, :, ::-1]
         else:
@@ -143,23 +142,28 @@ class Dataset(torch.utils.data.Dataset):
         
         # 获取分割图（如果有）
         if hasattr(self, 'segs') and len(self.segs) > 0:
-            seg_idx = idx % len(self.segs)
-            seg_img = cv2.imread(self.segs[seg_idx], cv2.IMREAD_GRAYSCALE).astype(np.float32)
-            
+            seg_idx = self._raw_idx[idx]  # 用图像索引
+            seg_img = cv2.imread(self.segs[seg_idx], cv2.IMREAD_GRAYSCALE)
+            if seg_img is None:
+                raise ValueError(f"Failed to load segmentation: {self.segs[seg_idx]}")
             # 如果分割图尺寸与图像不同，需要调整
             if seg_img.shape[0] != H or seg_img.shape[1] != W:
                 seg_img = cv2.resize(seg_img, (W, H), interpolation=cv2.INTER_NEAREST)
-                
             # 应用与图像相同的随机裁剪
             seg_img = seg_img[h:h+res, w:w+res]
-            seg = seg_img[np.newaxis, :, :]
-            
+            seg_img = np.clip(seg_img, 0, 20)  # 限制到 [0, 20]
+            seg = seg_img[np.newaxis, :, :]  # [1, 512, 512]
             if self._xflip[idx]:
                 seg = seg[:, :, ::-1]
-            return image.copy(), mask, seg, self.get_label(idx)
         else:
-            # 如果没有分割图，返回原来的三个值
-            return image.copy(), mask, self.get_label(idx)
+            seg = np.zeros((1, res, res), dtype=np.float32)  # 默认空分割图
+        
+        # 修复标签
+        label = self.get_label(idx)
+        if label.shape[0] == 0:
+            label = np.zeros(20, dtype=np.float32)  # 强制 (20,)
+        
+        return image.copy(), mask, seg, label
 
     def get_label(self, idx):
         label = self._get_raw_labels()[self._raw_idx[idx]]
@@ -262,9 +266,19 @@ class ImageFolderMaskDataset(Dataset):
 
     def _load_seg(self):
         print(f"[DEBUG] 加载分割图，路径: {self._seg_dir}")
-        self.segs = sorted(glob.glob(os.path.join(self._seg_dir, '*.png')))
+        self.segs = []
+        for fname in self._image_fnames:
+            base_name = os.path.splitext(os.path.basename(fname))[0]
+            seg_path = os.path.join(self._seg_dir, f"{base_name}.png")
+            if os.path.exists(seg_path):
+                self.segs.append(seg_path)
+            else:
+                raise IOError(f"Segmentation file missing: {seg_path}")
         if len(self.segs) == 0:
-            print(f"警告: {self._seg_dir} 中未找到分割图像")
+            raise IOError(f"No segmentation files found in {self._seg_dir}")
+        assert len(self.segs) == len(self._image_fnames), f"Mismatch: {len(self.segs)} segs vs {len(self._image_fnames)} images"
+        for seg_path in self.segs[:5]:
+            print(f"[DEBUG] 分割图: {seg_path}")
 
 
     @staticmethod
