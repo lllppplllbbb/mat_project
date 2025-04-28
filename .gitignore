@@ -133,3 +133,6 @@ data/
 output/
 mat_env/
 *.zip
+
+Blog/*.md
+
