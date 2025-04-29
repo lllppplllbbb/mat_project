@@ -111,58 +111,50 @@ class Dataset(torch.utils.data.Dataset):
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
         assert image.dtype == np.uint8
-        
-        # 获取随机裁剪的位置（用于后续掩码和分割图的一致裁剪）
         res = self.resolution
         H, W = image.shape[1], image.shape[2]
         h = random.randint(0, H - res) if H > res else 0
         w = random.randint(0, W - res) if W > res else 0
+        # 加载掩码
+        img_filename = os.path.basename(self._image_fnames[self._raw_idx[idx]])
+        mask_filename = os.path.splitext(img_filename)[0] + '.png'
+        mask_path = os.path.join(self.mask_dir, mask_filename)
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError(f"Failed to load mask: {mask_path}")
+        if mask.shape[0] != H or mask.shape[1] != W:
+            mask = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
+        mask = mask[h:h+res, w:w+res]
+        mask = (mask > 128).astype(np.float32)  # 0/255 -> 0/1
+        mask = mask[np.newaxis, :, :]  # [1, H, W]
         
         if self._xflip[idx]:
-            assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
+            mask = mask[:, :, ::-1]
             
-        # 优先使用预生成的掩码文件
-        if hasattr(self, 'masks') and len(self.masks) > 0:
-            mask_idx = idx % len(self.masks)
-            mask_img = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE)
-            if mask_img is None:
-                raise ValueError(f"Failed to load mask: {self.masks[mask_idx]}")
-            # 如果掩码尺寸与图像不同，需要调整
-            if mask_img.shape[0] != H or mask_img.shape[1] != W:
-                mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
-            # 应用与图像相同的随机裁剪
-            mask_img = mask_img[h:h+res, w:w+res]
-            mask = mask_img[np.newaxis, :, :] / 255.0
-            if self._xflip[idx]:
-                mask = mask[:, :, ::-1]
-        else:
-            # 如果没有掩码文件，使用RandomMask生成
-            mask = RandomMask(image.shape[-1], hole_range=self._hole_range)
-        
-        # 获取分割图（如果有）
+        # 加载分割图
         if hasattr(self, 'segs') and len(self.segs) > 0:
-            seg_idx = self._raw_idx[idx]  # 用图像索引
+            seg_idx = self._raw_idx[idx]
             seg_img = cv2.imread(self.segs[seg_idx], cv2.IMREAD_GRAYSCALE)
             if seg_img is None:
                 raise ValueError(f"Failed to load segmentation: {self.segs[seg_idx]}")
-            # 如果分割图尺寸与图像不同，需要调整
             if seg_img.shape[0] != H or seg_img.shape[1] != W:
                 seg_img = cv2.resize(seg_img, (W, H), interpolation=cv2.INTER_NEAREST)
-            # 应用与图像相同的随机裁剪
             seg_img = seg_img[h:h+res, w:w+res]
-            seg_img = np.clip(seg_img, 0, 20)  # 限制到 [0, 20]
+            seg_img[seg_img == 255] = 0
+            seg_img[(seg_img > 20)] = 0
+            if idx < 10:
+                print(f"[DEBUG] 分割图 {self.segs[seg_idx]} 类别: {np.unique(seg_img)}")
             seg = seg_img[np.newaxis, :, :]  # [1, 512, 512]
             if self._xflip[idx]:
                 seg = seg[:, :, ::-1]
         else:
-            seg = np.zeros((1, res, res), dtype=np.float32)  # 默认空分割图
-        
-        # 修复标签
+            seg = np.zeros((1, res, res), dtype=np.float32)
+    
         label = self.get_label(idx)
         if label.shape[0] == 0:
-            label = np.zeros(20, dtype=np.float32)  # 强制 (20,)
-        
+            label = np.zeros(20, dtype=np.float32)
+    
         return image.copy(), mask, seg, label
 
     def get_label(self, idx):

@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -94,55 +94,55 @@ class Dataset(torch.utils.data.Dataset):
         return self._raw_idx.size
 
     def __getitem__(self, idx):
+        idx = idx % len(self._raw_idx)
         image = self._load_raw_image(self._raw_idx[idx])
-        if image.shape[0] == 1:
-            image = np.repeat(image, 3, axis=0)
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
         assert image.dtype == np.uint8
-        
-        # 获取随机裁剪的位置（与训练集一致）
         res = self.resolution
         H, W = image.shape[1], image.shape[2]
         h = random.randint(0, H - res) if H > res else 0
         w = random.randint(0, W - res) if W > res else 0
+        # 加载掩码
+        img_filename = os.path.basename(self._image_fnames[self._raw_idx[idx]])
+        mask_filename = os.path.splitext(img_filename)[0] + '.png'
+        mask_path = os.path.join(self.mask_dir, mask_filename)
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError(f"Failed to load mask: {mask_path}")
+        if mask.shape[0] != H or mask.shape[1] != W:
+            mask = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
+        mask = mask[h:h+res, w:w+res]
+        mask = (mask > 128).astype(np.float32)  # 0/255 -> 0/1
+        mask = mask[np.newaxis, :, :]  # [1, H, W]
         
         if self._xflip[idx]:
             image = image[:, :, ::-1]
-        
-        # 加载掩码
-        mask_idx = idx % len(self.masks)
-        mask_img = cv2.imread(self.masks[mask_idx], cv2.IMREAD_GRAYSCALE)
-        if mask_img is None:
-            raise ValueError(f"Failed to load mask: {self.masks[mask_idx]}")
-        if mask_img.shape[0] != H or mask_img.shape[1] != W:
-            mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
-        mask_img = mask_img[h:h+res, w:w+res]
-        mask = mask_img[np.newaxis, :, :] / 255.0
-        if self._xflip[idx]:
             mask = mask[:, :, ::-1]
-        
+            
         # 加载分割图
         if hasattr(self, 'segs') and len(self.segs) > 0:
-            seg_idx = self._raw_idx[idx]  # 用图像索引
+            seg_idx = self._raw_idx[idx]
             seg_img = cv2.imread(self.segs[seg_idx], cv2.IMREAD_GRAYSCALE)
             if seg_img is None:
                 raise ValueError(f"Failed to load segmentation: {self.segs[seg_idx]}")
             if seg_img.shape[0] != H or seg_img.shape[1] != W:
                 seg_img = cv2.resize(seg_img, (W, H), interpolation=cv2.INTER_NEAREST)
             seg_img = seg_img[h:h+res, w:w+res]
-            seg_img = np.clip(seg_img, 0, 20)  # 限制到 [0, 20]
-            seg = seg_img[np.newaxis, :, :]
+            seg_img[seg_img == 255] = 0
+            seg_img[(seg_img > 20)] = 0
+            if idx < 10:
+                print(f"[DEBUG] 分割图 {self.segs[seg_idx]} 类别: {np.unique(seg_img)}")
+            seg = seg_img[np.newaxis, :, :]  # [1, 512, 512]
             if self._xflip[idx]:
                 seg = seg[:, :, ::-1]
         else:
-            seg = np.zeros((1, res, res), dtype=np.float32)  # 默认空分割图
-        
-        # 修复标签
+            seg = np.zeros((1, res, res), dtype=np.float32)
+    
         label = self.get_label(idx)
         if label.shape[0] == 0:
-            label = np.zeros(20, dtype=np.float32)  # 强制 (20,)
-        
+            label = np.zeros(20, dtype=np.float32)
+    
         return image.copy(), mask, seg, label
 
     def get_label(self, idx):
@@ -218,6 +218,7 @@ class ImageFolderMaskDataset(Dataset):
         resolution      = 512,  # Ensure specific resolution, None = highest available.
         hole_range=[0,1],
         seg_dir=None,
+        mask_dir=None,          # 添加这一行
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
         self._path = path
@@ -241,7 +242,7 @@ class ImageFolderMaskDataset(Dataset):
         name = os.path.splitext(os.path.basename(self._path))[0]
         raw_shape = [len(self._image_fnames)] + [3, resolution, resolution]
         super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, **super_kwargs)
-        self._load_mask()
+        self._load_mask(mask_dir)  # 修改这一行，传入mask_dir
         self._load_seg()
     def _load_mask(self, mpath=None):
     # 添加调试信息
@@ -250,6 +251,7 @@ class ImageFolderMaskDataset(Dataset):
         if not hasattr(self, '_path'):
             return
         mpath = mpath or os.path.join(self._path, 'masks')
+        self.mask_dir = mpath  # 添加这一行，保存掩码目录路径为类属性
         self.masks = sorted(glob.glob(os.path.join(mpath, '*.png')))
         if len(self.masks) == 0:
             raise IOError(f'No mask files found in {mpath}')   
