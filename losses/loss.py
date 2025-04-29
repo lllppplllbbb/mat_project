@@ -8,7 +8,7 @@
 
 import numpy as np
 import torch
-import torch.nn.functional as F  # 添加这一行导入F
+import torch.nn.functional as F  
 from torch_utils import training_stats
 from torch_utils import misc
 from torch_utils.ops import conv2d_gradfix
@@ -23,7 +23,7 @@ class Loss:
 #----------------------------------------------------------------------------
 
 class TwoStageLoss(Loss):
-    def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2, truncation_psi=1, pcp_ratio=1.0):
+    def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2, truncation_psi=1, pcp_ratio=0.5, sem_ratio=0.3):
         super().__init__()
         self.device = device
         self.G_mapping = G_mapping
@@ -37,8 +37,9 @@ class TwoStageLoss(Loss):
         self.pl_weight = pl_weight
         self.pl_mean = torch.zeros([], device=device)
         self.truncation_psi = truncation_psi
-        self.pcp = PerceptualLoss(layer_weights=dict(conv4_4=1/4, conv5_4=1/2)).to(device)
+        self.pcp = PerceptualLoss(layer_weights={'relu4_2': 1/4, 'relu5_4': 1/2}).to(device)
         self.pcp_ratio = pcp_ratio
+        self.sem_ratio = sem_ratio
 
     def run_G(self, img_in, mask_in, z, c, sync):
         with misc.ddp_sync(self.G_mapping, sync):
@@ -62,6 +63,24 @@ class TwoStageLoss(Loss):
         with misc.ddp_sync(self.D, sync):
             logits, logits_stg1 = self.D(img, mask, img_stg1, c)
         return logits, logits_stg1
+    
+    #计算语义加权感知损失
+    def perceptual_loss_with_weights(self, pred, target, seg):
+        weights = generate_weight_map(seg)
+        pcp_loss, pcp_features = self.pcp(pred, target)
+        gt_features = self.pcp(target, target)[1]  # 获取目标特征
+        print(f"[DEBUG] VGG特征: {list(pcp_features.keys())}")
+        weighted_pcp_loss = 0
+        for layer, feat in pcp_features.items():
+            # 调整权重图到特征图尺寸
+            feat_size = feat.shape[2:]
+            weights_resized = F.interpolate(weights, size=feat_size, mode='nearest')
+            # 计算加权损失
+            layer_loss = F.mse_loss(feat, gt_features[layer], reduction='none')
+            weighted_layer_loss = (layer_loss * weights_resized).mean()
+            weighted_pcp_loss += weighted_layer_loss * self.pcp.layer_weights[layer]
+        print(f"[DEBUG] 加权感知损失: {weighted_pcp_loss.item():.4f}")
+        return weighted_pcp_loss
 
     def accumulate_gradients(self, phase, real_img, mask, real_c, gen_z, gen_c, sync, gain, seg_map=None):  # 添加seg_map参数
         assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
@@ -86,7 +105,7 @@ class TwoStageLoss(Loss):
                 # just for showing
                 l1_loss = torch.mean(torch.abs(gen_img - real_img))
                 training_stats.report('Loss/G/l1_loss', l1_loss)
-                pcp_loss, _ = self.pcp(gen_img, real_img)
+                pcp_loss = self.perceptual_loss_with_weights(gen_img, real_img, seg_map) if seg_map is not None else self.pcp(gen_img,real_img)[0]              
                 training_stats.report('Loss/G/pcp_loss', pcp_loss)
                 
                 # 添加语义损失计算
@@ -99,10 +118,7 @@ class TwoStageLoss(Loss):
             print(f"[DEBUG] 损失信息 - L1: {l1_loss.item():.4f}, 感知损失: {pcp_loss.item():.4f}, 语义损失: {sem_loss.item() if seg_map is not None else 0:.4f}")
             
             with torch.autograd.profiler.record_function('Gmain_backward'):
-                # 修改总损失计算，添加语义损失
-                loss_Gmain_all = loss_Gmain + loss_Gmain_stg1 + pcp_loss * self.pcp_ratio
-                if seg_map is not None:
-                    loss_Gmain_all = loss_Gmain_all + 0.3 * sem_loss  # 权重0.3
+                loss_Gmain_all = loss_Gmain + loss_Gmain_stg1 + pcp_loss * self.pcp_ratio + self.sem_ratio * sem_loss
                 loss_Gmain_all.mean().mul(gain).backward()
 
         # # Gpl: Apply path length regularization.
@@ -183,8 +199,15 @@ class TwoStageLoss(Loss):
 
 #----------------------------------------------------------------------------
 
-# 在适当位置添加语义损失函数
+# 语义损失函数
+def generate_weight_map(seg):
+    """生成语义权重图：背景(0)=0.7，前景(1-20)=1.7"""
+    weights = torch.ones_like(seg, dtype=torch.float32) * 0.7  # 背景权重
+    weights[seg > 0] = 1.7  # 前景权重
+    return weights
+
 def semantic_loss(pred, target, seg):
-    semantic_weight = seg.float() / 20.0  # 归一化到 [0, 1]
-    l1_loss = F.l1_loss(pred * semantic_weight, target * semantic_weight)
-    return l1_loss
+    """计算语义加权L1损失"""
+    weights = generate_weight_map(seg)
+    l1_loss = torch.abs(pred - target) * weights
+    return l1_loss.mean()
