@@ -31,8 +31,8 @@ except ImportError:
 class Dataset(torch.utils.data.Dataset):
     def __init__(self,
         name,                   # Name of the dataset.
-        raw_shape,              # Shape of the raw image data (NCHW).
-        resolution=128, 
+        raw_shape, image_dir, mask_dir=None, seg_dir=None,          
+        resolution=512, 
         max_size    = None,     # Artificially limit the size of the dataset. None = no limit. Applied before xflip.
         use_labels  = False,    # Enable conditioning labels? False = label dimension is zero.
         xflip       = False,    # Artificially double the size of the dataset via x-flips. Applied after max_size.
@@ -46,6 +46,7 @@ class Dataset(torch.utils.data.Dataset):
         self._raw_labels = None
         self._label_shape = None
         self._hole_range = hole_range  # 保存hole_range参数
+        
         self._resolution = resolution  # 修改为使用_resolution作为私有属性
 
         # Apply max_size.
@@ -115,6 +116,7 @@ class Dataset(torch.utils.data.Dataset):
         H, W = image.shape[1], image.shape[2]
         h = random.randint(0, H - res) if H > res else 0
         w = random.randint(0, W - res) if W > res else 0
+    
         # 加载掩码
         img_filename = os.path.basename(self._image_fnames[self._raw_idx[idx]])
         mask_filename = os.path.splitext(img_filename)[0] + '.png'
@@ -127,11 +129,13 @@ class Dataset(torch.utils.data.Dataset):
         mask = mask[h:h+res, w:w+res]
         mask = (mask > 128).astype(np.float32)  # 0/255 -> 0/1
         mask = mask[np.newaxis, :, :]  # [1, H, W]
-        
+        print(f"[DEBUG] 掩码 {mask_path} 原始值: {np.unique(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE))}")
+        print(f"[DEBUG] 掩码处理后值: {np.unique(mask)}")
+    
         if self._xflip[idx]:
             image = image[:, :, ::-1]
             mask = mask[:, :, ::-1]
-            
+    
         # 加载分割图
         if hasattr(self, 'segs') and len(self.segs) > 0:
             seg_idx = self._raw_idx[idx]
@@ -145,7 +149,7 @@ class Dataset(torch.utils.data.Dataset):
             seg_img[(seg_img > 20)] = 0
             if idx < 10:
                 print(f"[DEBUG] 分割图 {self.segs[seg_idx]} 类别: {np.unique(seg_img)}")
-            seg = seg_img[np.newaxis, :, :]  # [1, 512, 512]
+            seg = seg_img[np.newaxis, :, :]
             if self._xflip[idx]:
                 seg = seg[:, :, ::-1]
         else:
@@ -232,6 +236,7 @@ class ImageFolderMaskDataset(Dataset):
         self._zipfile = None
         self._hole_range = hole_range
         self._seg_dir = seg_dir or os.path.join(path, 'segmentations')
+        self.mask_dir = mask_dir if mask_dir else os.path.join(image_dir, 'masks')  # 默认 masks 子目录
 
 
         if os.path.isdir(self._path):

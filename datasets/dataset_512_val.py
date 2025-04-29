@@ -29,7 +29,7 @@ from datasets.mask_generator_512 import RandomMask
 class Dataset(torch.utils.data.Dataset):
     def __init__(
         self,
-        name,                   # Name of the dataset.
+        name, image_dir, mask_dir=None, seg_dir=None,                  # Name of the dataset.
         resolution=512,         # Resolution of the images.
         raw_shape=None,         # Shape of the raw image data (NCHW).
         hole_range=[0,1],       # 修正参数位置并添加逗号
@@ -44,6 +44,7 @@ class Dataset(torch.utils.data.Dataset):
         self._use_labels = use_labels
         self._raw_labels = None
         self._label_shape = None
+        self.mask_dir = mask_dir if mask_dir else os.path.join(image_dir, 'masks')
         self._resolution = resolution  # 修改为使用_resolution作为私有属性
     
 
@@ -103,6 +104,7 @@ class Dataset(torch.utils.data.Dataset):
         H, W = image.shape[1], image.shape[2]
         h = random.randint(0, H - res) if H > res else 0
         w = random.randint(0, W - res) if W > res else 0
+    
         # 加载掩码
         img_filename = os.path.basename(self._image_fnames[self._raw_idx[idx]])
         mask_filename = os.path.splitext(img_filename)[0] + '.png'
@@ -115,11 +117,13 @@ class Dataset(torch.utils.data.Dataset):
         mask = mask[h:h+res, w:w+res]
         mask = (mask > 128).astype(np.float32)  # 0/255 -> 0/1
         mask = mask[np.newaxis, :, :]  # [1, H, W]
-        
+        print(f"[DEBUG] 掩码 {mask_path} 原始值: {np.unique(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE))}")
+        print(f"[DEBUG] 掩码处理后值: {np.unique(mask)}")
+    
         if self._xflip[idx]:
             image = image[:, :, ::-1]
             mask = mask[:, :, ::-1]
-            
+    
         # 加载分割图
         if hasattr(self, 'segs') and len(self.segs) > 0:
             seg_idx = self._raw_idx[idx]
@@ -133,7 +137,7 @@ class Dataset(torch.utils.data.Dataset):
             seg_img[(seg_img > 20)] = 0
             if idx < 10:
                 print(f"[DEBUG] 分割图 {self.segs[seg_idx]} 类别: {np.unique(seg_img)}")
-            seg = seg_img[np.newaxis, :, :]  # [1, 512, 512]
+            seg = seg_img[np.newaxis, :, :]
             if self._xflip[idx]:
                 seg = seg[:, :, ::-1]
         else:

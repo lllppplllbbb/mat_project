@@ -41,17 +41,17 @@ def RandomBrush(
 
         draw = ImageDraw.Draw(mask)
         width = int(np.random.uniform(min_width, max_width))
-        draw.line(vertex, fill=1, width=width)
+        draw.line(vertex, fill=255, width=width)
         for v in vertex:
             draw.ellipse((v[0] - width//2,
                           v[1] - width//2,
                           v[0] + width//2,
                           v[1] + width//2),
-                         fill=1)
+                         fill=255)
         if np.random.random() > 0.5:
-            mask.transpose(Image.FLIP_LEFT_RIGHT)
+            mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
         if np.random.random() > 0.5:
-            mask.transpose(Image.FLIP_TOP_BOTTOM)
+            mask = mask.transpose(Image.FLIP_TOP_BOTTOM)
     mask = np.asarray(mask, np.uint8)
     if np.random.random() > 0.5:
         mask = np.flip(mask, 0)
@@ -77,12 +77,21 @@ def RandomMask(s, hole_range=[0,1]):
         hole_ratio = 1 - np.mean(mask)
         if hole_range is not None and (hole_ratio <= hole_range[0] or hole_ratio >= hole_range[1]):
             continue
-        return mask[np.newaxis, ...].astype(np.float32)
+        return mask[np.newaxis, ...].astype(np.uint8)
 
 def BatchRandomMask(batch_size, s, hole_range=[0, 1]):
     return np.stack([RandomMask(s, hole_range=hole_range) for _ in range(batch_size)], axis=0)
 
-def save_masks(img_dir, mask_dir=None, resolution=128):
+def generate_mask(img_path, output_path, resolution=512):
+    """为单个图像生成掩码并保存"""
+    mask = RandomMask(s=resolution)
+    mask = mask[0] * 255  # [1,s,s] -> [s,s], 0/1 -> 0/255 
+    mask_img = Image.fromarray(mask.astype(np.uint8), mode='L')
+    mask_img.save(output_path)
+    print(f"[DEBUG] 掩码 {output_path} 值: {np.unique(mask)}")
+    return mask
+
+def save_masks(img_dir, mask_dir=None, resolution=512):
     # 如果没有指定mask_dir，则默认在img_dir下创建masks子目录
     if mask_dir is None:
         mask_dir = os.path.join(img_dir, "masks")
@@ -91,12 +100,8 @@ def save_masks(img_dir, mask_dir=None, resolution=128):
     
     for img_name in os.listdir(img_dir):
         if img_name.endswith('.jpg') or img_name.endswith('.png'):
-            mask = RandomMask(s=resolution)
-            mask = mask[0] * 255  # [1,s,s] -> [s,s], 0/1 -> 0/255
-            mask_img = Image.fromarray(mask.astype(np.uint8), mode='L')
             mask_path = os.path.join(mask_dir, os.path.splitext(img_name)[0] + '.png')
-            mask_img.save(mask_path)
-            print(f"Saved {mask_path}")
+            generate_mask(os.path.join(img_dir, img_name), mask_path, resolution)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
