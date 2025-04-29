@@ -17,7 +17,8 @@ import torch
 import dnnlib
 import math
 import cv2
-
+import logging
+logging.basicConfig(filename='fid_debug.log', level=logging.DEBUG, filemode='w')
 #----------------------------------------------------------------------------
 
 class MetricOptions:
@@ -180,9 +181,12 @@ class ProgressMonitor:
 #----------------------------------------------------------------------------
 
 def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
-    dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
-    if data_loader_kwargs is None:
-        data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
+    dataset = opts.dataset_kwargs.pop('dataset')
+    logging.debug(f"加载数据集: {opts.data}, 分割路径: {opts.seg_dir}, 样本数: {len(dataset)}")
+    print(f"[DEBUG] 加载数据集: {opts.data}, 分割路径: {opts.seg_dir}, 样本数: {len(dataset)}")
+    logging.debug(f"Detector URL: {detector_url}")
+    print(f"[DEBUG] Detector URL: {detector_url}")
+    detector = torch.hub.load('pytorch/vision:v0.10.0', 'inception_v3', pretrained=True).eval().to(opts.device)
 
     # Try to lookup from cache.
     cache_file = None
@@ -216,11 +220,12 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
     item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((num_items - 1) // opts.num_gpus + 1)]
     # for images, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
     # adaptation to inpainting
-    for images, masks, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size,
-                                                       **data_loader_kwargs):
-    # --------------------------------
+    for images, masks, seg, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
+        images = (images.to(torch.float32) / 127.5 - 1)
+        logging.debug(f"Inception输入: 形状={images.shape}, 范围=[{images.min().item():.4f}, {images.max().item():.4f}]")
+        print(f"[DEBUG] Inception输入: 形状={images.shape}, 范围=[{images.min().item():.4f}, {images.max().item():.4f}]")
         features = detector(images.to(opts.device), **detector_kwargs)
         stats.append_torch(features, num_gpus=opts.num_gpus, rank=opts.rank)
         progress.update(stats.num_items)

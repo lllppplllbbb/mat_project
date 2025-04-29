@@ -20,6 +20,8 @@ from . import perceptual_path_length
 from . import inception_score
 from . import psnr_ssim_l1
 from . import inception_discriminative_score
+import logging
+logging.basicConfig(filename='fid_debug.log', level=logging.DEBUG, filemode='w')
 
 #----------------------------------------------------------------------------
 
@@ -39,13 +41,24 @@ def list_valid_metrics():
 #----------------------------------------------------------------------------
 
 def calc_metric(metric, **kwargs): # See metric_utils.MetricOptions for the full list of arguments.
-    assert is_valid_metric(metric)
-    opts = metric_utils.MetricOptions(**kwargs)
-
-    # Calculate.
-    start_time = time.time()
-    results = _metric_dict[metric](opts)
-    total_time = time.time() - start_time
+    # assert is_valid_metric(metric)
+    # opts = metric_utils.MetricOptions(**kwargs)
+    try:
+        opts = metric_utils.MetricOptions(cache=False, verbose=True, **kwargs)
+        logging.debug(f"计算指标: {metric}, 数据路径: {opts.data}, 分割路径: {opts.seg_dir}")
+        print(f"[DEBUG] 计算指标: {metric}, 数据路径: {opts.data}, 分割路径: {opts.seg_dir}")
+        dataset = opts.dataset_kwargs['dataset']
+        logging.debug(f"数据集大小: {len(dataset)}")
+        print(f"[DEBUG] 数据集大小: {len(dataset)}")
+        start_time = time.time()
+        results = _metric_dict[metric](opts)
+        total_time = time.time() - start_time
+        logging.debug(f"指标 {metric} 结果: {results}")
+        print(f"[DEBUG] 指标 {metric} 结果: {results}")
+    except Exception as e:
+        logging.error(f"指标 {metric} 失败: {str(e)}")
+        print(f"[ERROR] 指标 {metric} 失败: {str(e)}")
+        raise
 
     # Broadcast results.
     for key, value in list(results.items()):
@@ -188,6 +201,12 @@ def fid50_full(opts):
     opts.dataset_kwargs.update(max_size=None, xflip=False)
     fid = frechet_inception_distance.compute_fid(opts, max_real=50, num_gen=50)
     return dict(fid50_full=fid)
+
+@register_metric
+def fid1k_full(opts):
+    opts.dataset_kwargs.update(max_size=None, xflip=False)
+    fid = frechet_inception_distance.compute_fid(opts, max_real=1000, num_gen=1000)
+    return dict(fid1k_full=fid)
 
 @register_metric
 def kid50k_full(opts):

@@ -15,6 +15,10 @@ import numpy as np
 import scipy.linalg
 from . import metric_utils
 
+# 添加调试信息，打印已注册的指标
+from .metric_main import _metric_dict
+print(f"[DEBUG] 注册指标: {list(_metric_dict.keys())}")
+
 #----------------------------------------------------------------------------
 
 def compute_fid(opts, max_real, num_gen):
