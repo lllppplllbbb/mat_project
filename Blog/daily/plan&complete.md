@@ -50,3 +50,55 @@
    - **训练效率**：T4 单卡训练较慢（1000 kimg 耗时长），未充分利用双卡。
    - **生成质量**：PSNR 9.57 和 SSIM 0.54 较低，修复图像质量需优化。
    - **评估细节**：仅输出平均指标，需检查每张图像的具体表现。
+- 明日计划
+- **目标**：优化训练，跑256x256，改进指标。
+- **任务**（4-6小时）：
+  1. 保存Notebook，下载`output.zip`（0.5小时）。
+  2. 试T4双卡或P100，跑1000 kimg（2小时）。
+  3. 调整`kimg=10`，跑256x256（1小时）。
+  4. 优化模型（加DeepLabv3语义引导，0.5小时）。
+  5. 评估PSNR/SSIM/L1，更新`notes.md`（0.5小时）。
+- **注意**：
+  - 检查T4双卡配置（`--gpus 2`）。
+  - 若P100更快，切换加速器。
+  - 保存检查点和生成图像。
+  ## 4.23
+  - 数据集准备完成（200训练+50验证，掩码和分割图齐全）。
+  - 代码改动完成（`dataset_512.py`, `dataset_512_val.py`, `train.py`, `loss.py`, `metric_main.py`, `training_loop.py`, `generate_image.py`）。
+  - 测试数据加载成功，形状正确（512x512）。
+  - 未运行训练，计划4月24日完成。
+  ## 4月28日
+
+
+
+## 完成的工作
+1. **数据集与掩码生成**
+   - **copy_voc.py**：成功复制200张训练图和50张测试图，处理了分割图中的255值，确保类别分布合理（0-20全覆盖）。
+   - **mask_generator_512_small.py**：优化掩码生成，移除无意义的220处理，确认输出值为0/255（二值化）。训练和测试掩码平均值分别为0.78和0.77，适合文物修复。
+   - **test_dataset.py**：增强掩码检查，确认数据集大小400（含翻转增强），类别分布合理，但掩码值为[0. 1.]（浮点型，需修复为0/1）。
+   - **改动**：更新`mask_generator_512_small.py`和`dataset_512.py`，确保掩码二值性。
+
+2. **语义加权感知损失**
+   - **问题**：运行`test_semantic_loss.py`报`TypeError: forward() missing 1 required positional argument: 'gt'`，因`loss.py`中`self.pcp(target)`调用错误。
+   - **修复**：更新`loss.py`，使用`gt_features`避免重复调用`self.pcp`。同步更新`pcp.py`和`vggNet.py`的层命名（`relu4_2`, `relu5_4`）。
+   - **待验证**：运行`test_semantic_loss.py`，检查前景/背景损失差异。
+
+3. **总损失平衡**
+   - **问题**：`test_loss_balance.py`因感知损失错误失败。
+   - **修复**：依赖`loss.py`修复，目标损失比例为对抗50%、感知25%、语义25%。
+   - **待验证**：运行`test_loss_balance.py`，检查比例。
+
+4. **FID评估**
+   - **问题**：运行`fid50_full,fid1k_full`无输出，`fid_debug.log`为空，可能因数据加载失败或日志配置错误。
+   - **修复**：更新`metric_main.py`和`metric_utils.py`，添加数据加载和Inception输入日志，强制`cache=False`。
+   - **待验证**：重新运行FID命令，检查`fid_debug.log`和终端输出。
+
+5. **小规模测试**
+   - **状态**：`test_small_data.py`已添加调试，但因感知损失问题未运行。
+   - **计划**：修复感知损失后，测试10张图像的损失和类别。
+
+6. **全数据集准备**
+   - **计划**：更新`copy_voc.py`支持PASCAL VOC全集（1,464训练+1,449验证），待前置问题解决。
+   - **掩码生成**：确认命令：
+     ```bash
+     & f:/MAT_project/mat_env/Scripts/python.exe f:/MAT_project/datasets/mask_generator_512_small.py --img_dir "F:/MAT_project/MAT/data/train_images" --mask_dir "F:/MAT_project/MAT/data/masks/train"
