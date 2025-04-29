@@ -232,7 +232,7 @@ def setup_training_loop_kwargs(
         loss = 'losses.loss.TwoStageLoss'
     else:
         desc += '-' + loss.split('.')[-1]
-    args.loss_kwargs = dnnlib.EasyDict(class_name=loss, r1_gamma=spec.gamma)
+    args.loss_kwargs = dnnlib.EasyDict(class_name=loss, r1_gamma=spec.gamma, pcp_ratio=0.6, sem_ratio=0.4)
 
     args.total_kimg = spec.kimg
     args.batch_size = spec.mb
@@ -428,7 +428,8 @@ def subprocess_fn(rank, args, temp_dir):
     print(f"Rank {rank}: Initializing logger at {args.run_dir}/log.txt")
     os.makedirs(args.run_dir, exist_ok=True)
     dnnlib.util.Logger(file_name=os.path.join(args.run_dir, 'log.txt'), file_mode='a', should_flush=True)
-
+    import logging
+    logging.basicConfig(filename=os.path.join(args.run_dir, 'loss_balance.log'), level=logging.INFO)
     # Init torch.distributed.
     if args.num_gpus > 1:
         init_file = os.path.abspath(os.path.join(temp_dir, '.torch_distributed_init'))
