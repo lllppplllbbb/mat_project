@@ -6,8 +6,9 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from losses.loss import TwoStageLoss, generate_weight_map, semantic_loss
 from torch_utils import misc
-from datasets.dataset_512 import Dataset512
-dataset = Dataset512(image_dir='F:/MAT_project/MAT/data/train_images', seg_dir='F:/MAT_project/MAT/data/segmentations/train')
+# 修改导入语句，使用正确的模块和类名
+from datasets.dataset_512_val import ImageFolderMaskDataset
+dataset = ImageFolderMaskDataset(path='F:/MAT_project/MAT/data/train_images', seg_dir='F:/MAT_project/MAT/data/segmentations/train', resolution=512)
 class DummyModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
