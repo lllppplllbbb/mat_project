@@ -26,8 +26,8 @@ def test_loss_balance():
         G_mapping=G_mapping, 
         G_synthesis=G_synthesis, 
         D=D,
-        pcp_ratio=0.25,
-        sem_ratio=0.75
+        pcp_ratio=0.5,
+        sem_ratio=1.0
     )
     
     batch_size = 2
