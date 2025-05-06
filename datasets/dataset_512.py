@@ -1,5 +1,3 @@
-
-
 # Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
@@ -17,7 +15,7 @@ import json
 import torch
 import dnnlib
 import random
-import glob  # 添加这一行导入glob模块
+import glob
 from datasets.mask_generator_512 import RandomMask
 
 try:
@@ -46,7 +44,7 @@ class Dataset(torch.utils.data.Dataset):
         self._raw_labels = None
         self._label_shape = None
         self._hole_range = hole_range  # 保存hole_range参数
-        
+        self.mask_dir = mask_dir if mask_dir else os.path.join(image_dir, 'masks')
         self._resolution = resolution  # 修改为使用_resolution作为私有属性
 
         # Apply max_size.
@@ -102,6 +100,7 @@ class Dataset(torch.utils.data.Dataset):
         if not hasattr(self, '_path'):
             return
         mpath = mpath or os.path.join(self._path, 'masks')
+        self.mask_dir = mpath  # 添加这一行，保存掩码目录路径为类属性
         self.masks = sorted(glob.glob(os.path.join(mpath, '*.png')))
         if len(self.masks) == 0:
             raise IOError(f'No mask files found in {mpath}')
@@ -196,6 +195,10 @@ class Dataset(torch.utils.data.Dataset):
         assert len(self.image_shape) == 3 # CHW
         assert self.image_shape[1] == self.image_shape[2]
         return self.image_shape[1]
+    
+    @resolution.setter
+    def resolution(self, value):
+        self._resolution = value
 
     @property
     def label_shape(self):
@@ -231,17 +234,16 @@ class ImageFolderMaskDataset(Dataset):
         seg_dir=None,
         mask_dir=None,
         tranform=None,
-        resolution=None,
+        resolution=512,
         raw_shape=None,
         name='dataset',         
         **super_kwargs,         
     ):
         self._path = path
+        self.mask_dir = mask_dir if mask_dir else os.path.join(path, 'masks')
         self._zipfile = None
         self._hole_range = hole_range
         self._seg_dir = seg_dir or os.path.join(path, 'segmentations')
-        self.mask_dir = mask_dir if mask_dir else os.path.join(path, 'masks')
-
 
         if os.path.isdir(self._path):
             self._type = 'dir'
@@ -256,15 +258,13 @@ class ImageFolderMaskDataset(Dataset):
         self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
         if len(self._image_fnames) == 0:
             raise IOError('No image files found in the specified path')
-
+        
         name = os.path.splitext(os.path.basename(self._path))[0]
-        raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
-        if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
-            raise IOError('Image files do not match the specified resolution')
+        raw_shape = [len(self._image_fnames)] + [3, resolution, resolution]
         super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, image_dir=path, **super_kwargs)
         self._load_mask(mask_dir)
         self._load_seg()
-
+        
     def _load_seg(self):
         print(f"[DEBUG] 加载分割图，路径: {self._seg_dir}")
         self.segs = []
@@ -280,7 +280,6 @@ class ImageFolderMaskDataset(Dataset):
         assert len(self.segs) == len(self._image_fnames), f"Mismatch: {len(self.segs)} segs vs {len(self._image_fnames)} images"
         for seg_path in self.segs[:5]:
             print(f"[DEBUG] 分割图: {seg_path}")
-
 
     @staticmethod
     def _file_ext(fname):
@@ -323,8 +322,8 @@ class ImageFolderMaskDataset(Dataset):
         if image.shape[2] == 1:
             image = np.repeat(image, 3, axis=2)
 
-        # restricted to 512x512
-        res = 512
+        # restricted to resolution
+        res = self.resolution
         H, W, C = image.shape
         if H < res or W < res:
             top = 0
@@ -333,12 +332,11 @@ class ImageFolderMaskDataset(Dataset):
             right = max(0, res - W)
             image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_REFLECT)
         H, W, C = image.shape
-        h = random.randint(0, H - res)
-        w = random.randint(0, W - res)
+        h = (H - res) // 2
+        w = (W - res) // 2
         image = image[h:h+res, w:w+res, :]
 
         image = np.ascontiguousarray(image.transpose(2, 0, 1)) # HWC => CHW
-
         return image
 
     def _load_raw_labels(self):
@@ -354,20 +352,3 @@ class ImageFolderMaskDataset(Dataset):
         labels = np.array(labels)
         labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
         return labels
-
-
-if __name__ == '__main__':
-    res = 512
-    # 修改为适合Windows环境的路径
-    dpath = 'F:/MAT_project/MAT/data/train_images'
-    D = ImageFolderMaskDataset(path=dpath)
-    print(f"数据集大小: {D.__len__()}")
-    try:
-        # 测试第一个样本
-        print("测试第一个样本...")
-        a, b, c = D.__getitem__(0)
-        print(f"图像形状: {a.shape}, 掩码形状: {b.shape}")
-        if a.shape != (3, 512, 512):
-            print(f"警告: 图像形状不是 (3, 512, 512), 而是 {a.shape}")
-    except Exception as e:
-        print(f"测试失败: {e}")
