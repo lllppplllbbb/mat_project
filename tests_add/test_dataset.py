@@ -12,7 +12,8 @@ train_img_path = 'F:/MAT_project/MAT/data/train_images'
 train_seg_path = 'F:/MAT_project/MAT/data/segmentations/train'
 
 print("正在加载数据集...")
-D = ImageFolderMaskDataset(path=train_img_path, seg_dir=train_seg_path)
+# 明确指定分辨率为512
+D = ImageFolderMaskDataset(path=train_img_path, seg_dir=train_seg_path, resolution=512)
 print(f"数据集大小: {len(D)}")
 
 all_classes = set()

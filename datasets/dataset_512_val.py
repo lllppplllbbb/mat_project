@@ -218,14 +218,18 @@ class Dataset(torch.utils.data.Dataset):
 
 class ImageFolderMaskDataset(Dataset):
     def __init__(self,
-        path,                   # Path to directory or zip.
-        resolution      = 512,  # Ensure specific resolution, None = highest available.
+        path,                   
         hole_range=[0,1],
         seg_dir=None,
-        mask_dir=None,          # 添加这一行
-        **super_kwargs,         # Additional arguments for the Dataset base class.
+        mask_dir=None,
+        tranform=None,
+        resolution=None,
+        raw_shape=None,
+        name='dataset',         
+        **super_kwargs,         
     ):
         self._path = path
+        self.mask_dir = mask_dir if mask_dir else os.path.join(path, 'masks')
         self._zipfile = None
         self._hole_range = hole_range
 
@@ -245,8 +249,8 @@ class ImageFolderMaskDataset(Dataset):
         self._seg_dir = seg_dir or os.path.join(path, 'segmentations')
         name = os.path.splitext(os.path.basename(self._path))[0]
         raw_shape = [len(self._image_fnames)] + [3, resolution, resolution]
-        super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, **super_kwargs)
-        self._load_mask(mask_dir)  # 修改这一行，传入mask_dir
+        super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, image_dir=path, **super_kwargs)
+        self._load_mask(mask_dir)
         self._load_seg()
     def _load_mask(self, mpath=None):
     # 添加调试信息
@@ -320,7 +324,9 @@ class ImageFolderMaskDataset(Dataset):
 
             # restricted to 512x512
             # res = 512
-            res =self.resolution
+            res = self.resolution
+            if res is None:
+                res = 512  # 设置默认分辨率为512
             H, W, C = image.shape
             if H < res or W < res:
                 top = 0

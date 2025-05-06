@@ -226,17 +226,21 @@ class Dataset(torch.utils.data.Dataset):
 
 class ImageFolderMaskDataset(Dataset):
     def __init__(self,
-        path,                   # Path to directory or zip.
-        resolution      = None, # Ensure specific resolution, None = highest available.
+        path,                   
         hole_range=[0,1],
         seg_dir=None,
-        **super_kwargs,         # Additional arguments for the Dataset base class.
+        mask_dir=None,
+        tranform=None,
+        resolution=None,
+        raw_shape=None,
+        name='dataset',         
+        **super_kwargs,         
     ):
         self._path = path
         self._zipfile = None
         self._hole_range = hole_range
         self._seg_dir = seg_dir or os.path.join(path, 'segmentations')
-        self.mask_dir = mask_dir if mask_dir else os.path.join(image_dir, 'masks')  # 默认 masks 子目录
+        self.mask_dir = mask_dir if mask_dir else os.path.join(path, 'masks')
 
 
         if os.path.isdir(self._path):
@@ -257,8 +261,8 @@ class ImageFolderMaskDataset(Dataset):
         raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
         if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
             raise IOError('Image files do not match the specified resolution')
-        super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, hole_range=hole_range, **super_kwargs)
-        self._load_mask()
+        super().__init__(name=name, raw_shape=raw_shape, resolution=resolution, image_dir=path, **super_kwargs)
+        self._load_mask(mask_dir)
         self._load_seg()
 
     def _load_seg(self):
