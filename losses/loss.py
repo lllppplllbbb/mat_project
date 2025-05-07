@@ -16,8 +16,6 @@ from losses.pcp import PerceptualLoss
 import torchvision.utils as vutils
 import os
 
-#----------------------------------------------------------------------------
-
 class Loss:
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
         raise NotImplementedError()
@@ -42,24 +40,19 @@ class TwoStageLoss(Loss):
         self.sem_ratio = sem_ratio
         self.output_dir = 'MAT/small_result'
         os.makedirs(self.output_dir, exist_ok=True)
-        self.weights = {'adv': 1.0, 'pcp': 10.0, 'sem': 10.0}
+        self.weights = {'adv': 1.0, 'pcp': 10.0, 'sem': 0.5}  # 提高语义权重
         self.target_ratios = {'adv': 0.50, 'pcp': 0.25, 'sem': 0.25}
 
     def run_G(self, img_in, mask_in, z, c, sync):
         with misc.ddp_sync(self.G_mapping, sync):
             ws = self.G_mapping(z, c, truncation_psi=self.truncation_psi)
-            if self.style_mixing_prob > 0:
-                with torch.autograd.profiler.record_function('style_mixing'):
-                    cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
-                    cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
-                    ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, truncation_psi=self.truncation_psi, skip_w_avg_update=True)[:, cutoff:]
         with misc.ddp_sync(self.G_synthesis, sync):
             img, img_stg1 = self.G_synthesis(img_in, mask_in, ws, return_stg1=True)
         return img, ws, img_stg1
 
     def run_D(self, img, mask, img_stg1, c, sync):
         with misc.ddp_sync(self.D, sync):
-            logits, logits_stg1 = self.D(img, mask, img_stg1, c)
+            logits, logits_stg1 = self.D(img, mask, img_stg1)
         return logits, logits_stg1
 
     def perceptual_loss_with_weights(self, pred, target, seg):
@@ -111,15 +104,16 @@ class TwoStageLoss(Loss):
                     adv_ratio = (adv_loss.item() * self.weights['adv']) / total_loss_value
                     pcp_ratio = (pcp_loss.item() * self.weights['pcp']) / total_loss_value
                     sem_ratio = (sem_loss.item() * self.weights['sem']) / total_loss_value
-                    # 优化权重调整：增加学习率
-                    lr = 0.2  # 从 0.1 提高到 0.2
-                    self.weights['adv'] = self.weights['adv'] * (1 - lr) + lr * (self.target_ratios['adv'] / (adv_ratio + 1e-8))
-                    self.weights['pcp'] = self.weights['pcp'] * (1 - lr) + lr * (self.target_ratios['pcp'] / (pcp_ratio + 1e-8))
-                    self.weights['sem'] = self.weights['sem'] * (1 - lr) + lr * (self.target_ratios['sem'] / (sem_ratio + 1e-8))
+                    # 优化权重调整：降低学习率，增加 epsilon
+                    lr = 0.1  # 降低学习率
+                    epsilon = 1e-3  # 增大 epsilon
+                    self.weights['adv'] = self.weights['adv'] * (1 - lr) + lr * (self.target_ratios['adv'] / (adv_ratio + epsilon))
+                    self.weights['pcp'] = self.weights['pcp'] * (1 - lr) + lr * (self.target_ratios['pcp'] / (pcp_ratio + epsilon))
+                    self.weights['sem'] = self.weights['sem'] * (1 - lr) + lr * (self.target_ratios['sem'] / (sem_ratio + epsilon))
                     # 限制权重范围
-                    self.weights['adv'] = min(max(self.weights['adv'], 0.1), 100.0)
-                    self.weights['pcp'] = min(max(self.weights['pcp'], 0.1), 100.0)
-                    self.weights['sem'] = min(max(self.weights['sem'], 0.1), 100.0)
+                    self.weights['adv'] = min(max(self.weights['adv'], 0.1), 10.0)
+                    self.weights['pcp'] = min(max(self.weights['pcp'], 0.1), 20.0)
+                    self.weights['sem'] = min(max(self.weights['sem'], 0.1), 5.0)
                 else:
                     adv_ratio, pcp_ratio, sem_ratio = 0, 0, 0
 
@@ -136,7 +130,7 @@ class TwoStageLoss(Loss):
                 # 保存生成的图像
                 for i in range(gen_img.size(0)):
                     img_name = f"pred_{real_c[i]}.png" if real_c is not None else f"pred_{i}.png"
-                    vutils.save_image(gen_img[i], os.path.join(self.output_dir, img_name), normalize=True, value_range=(-1, 1))
+                    vutils.save_image(gen_img[i].clamp(-1, 1), os.path.join(self.output_dir, img_name), normalize=True, value_range=(-1, 1))
 
             with torch.autograd.profiler.record_function('Gmain_backward'):
                 loss_Gmain_all.mean().mul(gain).backward()
@@ -184,12 +178,12 @@ class TwoStageLoss(Loss):
 def generate_weight_map(seg):
     weights = torch.ones_like(seg, dtype=torch.float32) * 1.0  # 背景权重
     weights[seg > 0] = 2.0  # 所有前景
-    print(f"[DEBUG] 权重图唯一值: {torch.unique(weights).cpu().numpy()}")  # 将张量移到 CPU 再转 NumPy
+    print(f"[DEBUG] 权重图唯一值: {torch.unique(weights).cpu().numpy()}")
     return weights
 
 def semantic_loss(pred, target, seg):
     weights = generate_weight_map(seg)
-    loss = F.mse_loss(pred, target, reduction='none') / 100
+    loss = F.mse_loss(pred, target, reduction='none') / 100000  # 保持量级
     weighted_loss = (loss * weights).mean()
     print(f"[DEBUG] 语义损失（归一化后）: {weighted_loss.item():.4f}")
     return weighted_loss
