@@ -346,6 +346,24 @@ def training_loop(
         cur_nimg += batch_size
         batch_idx += 1
 
+        # 添加损失日志
+        if batch_idx % 10 == 0 and rank == 0:
+            # 运行一次前向传播以获取损失值
+            with torch.no_grad():
+                gen_img, _, gen_img_stg1 = loss.run_G(phase_real_img, phase_real_mask, all_gen_z[0], phase_real_c, sync=False)
+                gen_logits, gen_logits_stg1 = loss.run_D(gen_img, phase_real_mask, gen_img_stg1, phase_real_c, sync=False)
+                adv_loss = (torch.nn.functional.softplus(-gen_logits) + torch.nn.functional.softplus(-gen_logits_stg1)).mean() * 0.1
+                pcp_loss = loss.perceptual_loss_with_weights(gen_img, phase_real_img, phase_real_seg) if phase_real_seg is not None else loss.pcp(gen_img, phase_real_img)[0]
+                sem_loss = semantic_loss(gen_img, phase_real_img, phase_real_seg) if phase_real_seg is not None else torch.tensor(0.0, device=device)
+                total_loss = (loss.weights['adv'] * adv_loss + 
+                            loss.weights['pcp'] * pcp_loss + 
+                            loss.weights['sem'] * sem_loss)
+                total_value = total_loss.item()
+                adv_ratio = (adv_loss.item() * loss.weights['adv']) / total_value if total_value > 0 else 0
+                pcp_ratio = (pcp_loss.item() * loss.weights['pcp']) / total_value if total_value > 0 else 0
+                sem_ratio = (sem_loss.item() * loss.weights['sem']) / total_value if total_value > 0 else 0
+                print(f"[TRAIN] Step {batch_idx}: 总损失={total_value:.4f}, adv={adv_ratio:.2%}, pcp={pcp_ratio:.2%}, sem={sem_ratio:.2%}")
+
         # Execute ADA heuristic.
         if (ada_stats is not None) and (batch_idx % ada_interval == 0):
             ada_stats.update()
