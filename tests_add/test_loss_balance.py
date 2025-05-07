@@ -1,66 +1,94 @@
-import os
-import sys
 import torch
 import numpy as np
 from losses.loss import TwoStageLoss, generate_weight_map, semantic_loss
+from datasets.dataset_512 import ImageFolderMaskDataset
 from torch_utils import misc
+import os
+import torchvision.utils as vutils
 
 class DummyModel(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, is_discriminator=False):
         super().__init__()
-        self.dummy_param = torch.nn.Parameter(torch.ones(1))
-    def forward(self, x):
-        return x
+        self.is_discriminator = is_discriminator
+        self.conv1 = torch.nn.Conv2d(3, 64, kernel_size=3, padding=1)
+        self.conv2 = torch.nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.conv3 = torch.nn.Conv2d(64, 3, kernel_size=3, padding=1)
+        self.relu = torch.nn.ReLU(inplace=True)
+        torch.nn.init.xavier_uniform_(self.conv1.weight)
+        torch.nn.init.xavier_uniform_(self.conv2.weight)
+        torch.nn.init.xavier_uniform_(self.conv3.weight)
+
+    def forward(self, *args, **kwargs):
+        if len(args) > 0:
+            input_tensor = args[0].float() if args[0].dtype != torch.float32 else args[0]
+            if self.is_discriminator:
+                # 模拟判别器输出两个 logits
+                return torch.randn(input_tensor.shape[0], 1, device=input_tensor.device) * 0.1, torch.randn(input_tensor.shape[0], 1, device=input_tensor.device) * 0.1
+            # 模拟生成器：三层卷积保留图像结构
+            x = self.relu(self.conv1(input_tensor))
+            x = self.relu(self.conv2(x))
+            x = self.conv3(x)
+            noise = torch.randn_like(x) * 0.05  # 减小噪声
+            return torch.tanh(x + noise)  # 输出 [-1, 1]
+        else:
+            if self.is_discriminator:
+                return torch.randn(1, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')) * 0.1, torch.randn(1, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')) * 0.1
+            return torch.tanh(torch.randn(1, 3, 512, 512, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')))
 
 def test_loss_balance():
     print("测试损失平衡情况...")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"使用设备: {device}")
     
+    # 加载小规模数据集（512x512）
+    dataset = ImageFolderMaskDataset(
+        path='F:/MAT_project/MAT/data/train_images',
+        resolution=512,
+        max_size=10,
+        seg_dir='F:/MAT_project/MAT/data/segmentations/train'
+    )
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True)
+    
+    # 初始化模型和损失函数
     G_mapping = DummyModel().to(device)
     G_synthesis = DummyModel().to(device)
-    D = DummyModel().to(device)
+    D = DummyModel(is_discriminator=True).to(device)
+    loss_obj = TwoStageLoss(device=device, G_mapping=G_mapping, G_synthesis=G_synthesis, D=D, pcp_ratio=0.5, sem_ratio=0.3)
     
-    loss_obj = TwoStageLoss(
-        device=device, 
-        G_mapping=G_mapping, 
-        G_synthesis=G_synthesis, 
-        D=D,
-        pcp_ratio=0.5,
-        sem_ratio=1.0
-    )
-    
-    batch_size = 2
-    resolution = 256
-    pred = torch.randn(batch_size, 3, resolution, resolution, device=device)
-    target = torch.randn(batch_size, 3, resolution, resolution, device=device)
-    mask = torch.rand(batch_size, 1, resolution, resolution, device=device) > 0.7
-    seg = torch.randint(0, 21, (batch_size, 1, resolution, resolution), device=device).float()
-    
-    adv_loss = torch.nn.functional.mse_loss(pred, target) * 1.2
-    print(f"对抗损失  {adv_loss.item():.4f}")
-    
-    pcp_loss = loss_obj.perceptual_loss_with_weights(pred, target, seg)
-    print(f"感知损失 (原始): {pcp_loss.item():.4f}")
-    print(f"感知损失 : {(pcp_loss * 0.6).item():.4f}")
-    
-    sem_loss = semantic_loss(pred, target, seg)
-    print(f"语义损失 (原始): {sem_loss.item():.4f}")
-    print(f"语义损失 : {(sem_loss * 0.4).item():.4f}")
-    
-    total_loss = adv_loss + pcp_loss * 0.6 + sem_loss * 0.4
-    print(f"总损失: {total_loss.item():.4f}")
-    
-    adv_ratio = adv_loss.item() / total_loss.item()
-    pcp_ratio = (pcp_loss.item() * 0.6) / total_loss.item()
-    sem_ratio = (sem_loss.item() * 0.4) / total_loss.item()
-    
-    print("\n损失比例分析:")
-    print(f"对抗损失占比: {adv_ratio:.2%}")
-    print(f"感知损失占比: {pcp_ratio:.2%}")
-    print(f"语义损失占比: {sem_ratio:.2%}")
-    
-    print("\n测试完成!")
+    # 测试损失
+    os.makedirs('MAT/test_results', exist_ok=True)
+    for i, (img, mask, seg, _) in enumerate(dataloader):
+        img, mask, seg = img.to(device), mask.to(device), seg.to(device)
+        gen_img = loss_obj.G_synthesis(img * (1 - mask), mask)
+        gen_logits, gen_logits_stg1 = loss_obj.D(gen_img, mask)
+        adv_loss = (torch.nn.functional.softplus(-gen_logits) + torch.nn.functional.softplus(-gen_logits_stg1)).mean() * 100000.0  # 与 loss.py 同步
+        pcp_loss = loss_obj.perceptual_loss_with_weights(gen_img, img, seg)
+        sem_loss = semantic_loss(gen_img, img, seg)
+        
+        # 计算总损失和占比
+        total_loss = (loss_obj.weights['adv'] * adv_loss + 
+                      loss_obj.weights['pcp'] * pcp_loss + 
+                      loss_obj.weights['sem'] * sem_loss)
+        total_value = total_loss.item()
+        adv_ratio = (adv_loss.item() * loss_obj.weights['adv']) / total_value if total_value > 0 else 0
+        pcp_ratio = (pcp_loss.item() * loss_obj.weights['pcp']) / total_value if total_value > 0 else 0
+        sem_ratio = (sem_loss.item() * loss_obj.weights['sem']) / total_value if total_value > 0 else 0
+        
+        print(f"[TEST] 对抗损失: {adv_loss.item():.4f}, 占比: {adv_ratio:.2%} (目标: 50%)")
+        print(f"[TEST] 感知损失: {pcp_loss.item():.4f}, 占比: {pcp_ratio:.2%} (目标: 25%)")
+        print(f"[TEST] 语义损失: {sem_loss.item():.4f}, 占比: {sem_ratio:.2%} (目标: 25%)")
+        print(f"[TEST] 总损失: {total_value:.4f}")
+        print("-" * 50)
+        
+        # 保存生成图像、输入图像和掩码
+        vutils.save_image(gen_img.clamp(-1, 1), f'MAT/test_results/pred_{i}.png', normalize=True, value_range=(-1, 1))
+        vutils.save_image(img.float(), f'MAT/test_results/input_{i}.png', normalize=True, value_range=(-1, 1))
+        vutils.save_image(mask.float(), f'MAT/test_results/mask_{i}.png', normalize=True, value_range=(0, 1))
+        
+        # 保存生成图像、输入图像和掩码
+        # 修复：确保所有图像都在合适的范围内，并使用正确的数据类型
+        # vutils.save_image(gen_img.clamp(-1, 1), f'MAT/test_results/pred_{i}.png', normalize=True, range=(-1, 1))
+        # vutils.save_image(img.float(), f'MAT/test_results/input_{i}.png', normalize=True)
+        # vutils.save_image(mask.float(), f'MAT/test_results/mask_{i}.png', normalize=False)
 
 if __name__ == "__main__":
     test_loss_balance()
