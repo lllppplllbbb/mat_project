@@ -5,7 +5,7 @@
 # and any modifications thereto.  Any use, reproduction, disclosure or
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
-
+_metric_dict = dict() 
 import os
 import time
 import json
@@ -201,6 +201,12 @@ def fid50_full(opts):
     opts.dataset_kwargs.update(max_size=None, xflip=False)
     fid = frechet_inception_distance.compute_fid(opts, max_real=50, num_gen=50)
     return dict(fid50_full=fid)
+
+@register_metric
+def fid10k_full(opts):
+    opts.dataset_kwargs.update(max_size=None, xflip=False)
+    fid = frechet_inception_distance.compute_fid(opts, max_real=10000, num_gen=10000)
+    return dict(fid10k_full=fid)
 
 @register_metric
 def fid1k_full(opts):

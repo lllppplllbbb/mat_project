@@ -87,7 +87,7 @@ def setup_training_loop_kwargs(
     args.network_snapshot_ticks = snap
 
     if metrics is None:
-        metrics = ['fid50_full']
+        metrics = ['fid10k_full']
     assert isinstance(metrics, list)
     if not all(metric_main.is_valid_metric(metric) for metric in metrics):
         raise UserError('\n'.join(['--metrics can only contain the following values:'] + metric_main.list_valid_metrics()))
@@ -232,7 +232,7 @@ def setup_training_loop_kwargs(
         loss = 'losses.loss.TwoStageLoss'
     else:
         desc += '-' + loss.split('.')[-1]
-    args.loss_kwargs = dnnlib.EasyDict(class_name=loss, r1_gamma=spec.gamma, pcp_ratio=0.6, sem_ratio=0.4)
+    args.loss_kwargs = dnnlib.EasyDict(class_name=loss, r1_gamma=spec.gamma, pcp_ratio=1.0, sem_ratio=1.0)
 
     args.total_kimg = spec.kimg
     args.batch_size = spec.mb

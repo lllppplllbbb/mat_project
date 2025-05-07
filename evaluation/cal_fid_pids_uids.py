@@ -127,8 +127,8 @@ class FeatureStats:
 def calculate_metrics(folder1, folder2):
     l1 = sorted(glob.glob(folder1 + '/*.png') + glob.glob(folder1 + '/*.jpg'))
     l2 = sorted(glob.glob(folder2 + '/*.png') + glob.glob(folder2 + '/*.jpg'))
-    assert(len(l1) == len(l2))
-    print('length:', len(l1))
+    assert len(l1) == len(l2), f"Mismatch: {len(l1)} inpainted vs {len(l2)} ground truth"
+    print(f'Number of images: {len(l1)}')
 
     # l1 = l1[:3]; l2 = l2[:3];
 
@@ -178,16 +178,17 @@ def calculate_metrics(folder1, folder2):
     real_outputs = svm.decision_function(real_activations)
     fake_outputs = svm.decision_function(fake_activations)
     pids = np.mean(fake_outputs > real_outputs)
-
+    fid, pids, uids = calculate_metrics(folder1, folder2)
+    print(f'FID: {fid:.4f}, PIDS: {pids:.4f}, UIDS: {uids:.4f}')
+    with open('fid_debug.log', 'a') as f:
+        f.write(f'FID: {fid:.4f}, PIDS: {pids:.4f}, UIDS: {uids:.4f}\n')
     return fid, pids, uids
 
 
-if __name__ == '__main__':
-    folder1 = 'path to the inpainted result'
-    folder2 = 'path to the gt'
 
+if __name__ == '__main__':
+    folder1 = 'results'
+    folder2 = 'F:/MAT_project/MAT/data/test_images'
     fid, pids, uids = calculate_metrics(folder1, folder2)
-    print('fid: %.4f, pids: %.4f, uids: %.4f' % (fid, pids, uids))
-    with open('fid_pids_uids.txt', 'w') as f:
-        f.write('fid: %.4f, pids: %.4f, uids: %.4f' % (fid, pids, uids))
+
 
