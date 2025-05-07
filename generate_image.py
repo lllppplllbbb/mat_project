@@ -64,8 +64,8 @@ def named_params_and_buffers(module):
 @click.option('--dpath', help='the path of the input image', required=True)
 @click.option('--mpath', help='the path of the mask')
 @click.option('--resolution', type=int, help='resolution of input image', default=512, show_default=True)
-@click.option('--trunc', 'truncation_psi', type=float, help='Truncation psi', default=1, show_default=True)
-@click.option('--noise-mode', help='Noise mode', type=click.Choice(['const', 'random', 'none']), default='const', show_default=True)
+# @click.option('--trunc', 'truncation_psi', type=float, help='Truncation psi', default=1, show_default=True)
+# @click.option('--noise-mode', help='Noise mode', type=click.Choice(['const', 'random', 'none']), default='const', show_default=True)
 @click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR')
 @click.option('--batch', is_flag=True, help='Process all images in the directory')
 def generate_images(
@@ -74,21 +74,21 @@ def generate_images(
     dpath: str,
     mpath: Optional[str],
     resolution: int,
-    truncation_psi: float,
-    noise_mode: str,
+    # truncation_psi: float,
+    # noise_mode: str,
     outdir: str,
     batch: bool,
 ):
-    """
-    Generate images using pretrained network pickle.
-    """
-    seed = 240  # pick up a random number
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+    # """
+    # Generate images using pretrained network pickle.
+    # """
+    # seed = 240  # pick up a random number
+    # random.seed(seed)
+    # np.random.seed(seed)
+    # torch.manual_seed(seed)
+    # torch.cuda.manual_seed(seed)
 
-    print(f'Loading networks from: {network_pkl}')
+    # print(f'Loading networks from: {network_pkl}')
     device = torch.device('cuda')
     with dnnlib.util.open_url(network_pkl) as f:
         G_saved = legacy.load_network_pkl(f)['G_ema'].to(device).eval().requires_grad_(False) # type: ignore
@@ -98,62 +98,30 @@ def generate_images(
     os.makedirs(outdir, exist_ok=True)
     label = torch.zeros([1, G.c_dim], device=device)
 
-    # 处理单张图片或批量处理
     if batch:
-        print(f'Loading data from: {dpath}')
         img_list = sorted(glob.glob(dpath + '/*.png') + glob.glob(dpath + '/*.jpg'))
-        
-        if mpath is not None:
-            print(f'Loading mask from: {mpath}')
-            mask_list = sorted(glob.glob(mpath + '/*.png') + glob.glob(mpath + '/*.jpg'))
-            assert len(img_list) == len(mask_list), 'illegal mapping'
-            
-        with torch.no_grad():
-            for i, ipath in enumerate(img_list):
-                iname = os.path.basename(ipath)
-                print(f'Processing: {iname}')
-                image = read_image(ipath)
-                image = (torch.from_numpy(image).float().to(device) / 127.5 - 1).unsqueeze(0)
-
-                if mpath is not None:
-                    mask = cv2.imread(mask_list[i], cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0
-                    mask = torch.from_numpy(mask).float().to(device).unsqueeze(0).unsqueeze(0)
-                else:
-                    mask = RandomMask(resolution) # adjust the masking ratio by using 'hole_range'
-                    mask = torch.from_numpy(mask).float().to(device).unsqueeze(0)
-
-                z = torch.from_numpy(np.random.randn(1, G.z_dim)).to(device)
-                output = G(image, mask, z, label, truncation_psi=truncation_psi, noise_mode=noise_mode)
+        mask_list = sorted(glob.glob(mpath + '/*.png') + glob.glob(mpath + '/*.jpg')) if mpath else None
+        assert mask_list is None or len(img_list) == len(mask_list), 'Image and mask count mismatch'
+        for i, ipath in enumerate(img_list):
+            iname = os.path.basename(ipath)
+            print(f'[DEBUG] Processing: {iname}')
+            image = read_image(ipath)
+            image = (torch.from_numpy(image).float().to(device) / 127.5 - 1).unsqueeze(0)
+            if mask_list:
+                mask = cv2.imread(mask_list[i], cv2.IMREAD_GRAYSCALE)
+                mask = (mask > 128).astype(np.uint8)  # [0, 1]
+                mask = torch.from_numpy(mask).float().to(device).unsqueeze(0).unsqueeze(0)
+            else:
+                mask = RandomMask(resolution).astype(np.uint8)
+                mask = torch.from_numpy(mask).float().to(device).unsqueeze(0)
+            z = torch.from_numpy(np.random.randn(1, G.z_dim)).to(device)
+            with torch.no_grad():
+                output = G(image, mask, z, label, truncation_psi=1, noise_mode='const')
                 output = (output.permute(0, 2, 3, 1) * 127.5 + 127.5).round().clamp(0, 255).to(torch.uint8)
                 output = output[0].cpu().numpy()
                 outpath = f'{outdir}/{iname}'
-                print(f'Saving image to {outpath}')
+                print(f'[DEBUG] Saving image to {outpath}')
                 PIL.Image.fromarray(output, 'RGB').save(outpath)
-    else:
-        # 处理单张图片
-        print(f'Processing single image: {dpath}')
-        iname = os.path.basename(dpath)
-        image = read_image(dpath, resize_to=resolution)
-        image = (torch.from_numpy(image).float().to(device) / 127.5 - 1).unsqueeze(0)
-        
-        if mpath:
-            print(f'Loading mask from: {mpath}')
-            mask = cv2.imread(mpath, cv2.IMREAD_GRAYSCALE)
-            mask = cv2.resize(mask, (resolution, resolution), interpolation=cv2.INTER_NEAREST)
-            mask = mask.astype(np.float32) / 255.0
-            mask = torch.from_numpy(mask).float().to(device).unsqueeze(0).unsqueeze(0)
-        else:
-            mask = RandomMask(resolution)
-            mask = torch.from_numpy(mask).float().to(device).unsqueeze(0)
-            
-        z = torch.from_numpy(np.random.randn(1, G.z_dim)).to(device)
-        with torch.no_grad():
-            output = G(image, mask, z, label, truncation_psi=truncation_psi, noise_mode=noise_mode)
-            output = (output.permute(0, 2, 3, 1) * 127.5 + 127.5).round().clamp(0, 255).to(torch.uint8)
-            output = output[0].cpu().numpy()
-            outpath = f'{outdir}/{iname}'
-            print(f'Saving image to {outpath}')
-            PIL.Image.fromarray(output, 'RGB').save(outpath)
 
 def read_image(image_path, resize_to=None):
     with open(image_path, 'rb') as f:
