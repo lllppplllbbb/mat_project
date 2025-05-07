@@ -19,10 +19,8 @@ import os
 #----------------------------------------------------------------------------
 
 class Loss:
-    def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain): # to be overridden by subclass
+    def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
         raise NotImplementedError()
-
-#----------------------------------------------------------------------------
 
 class TwoStageLoss(Loss):
     def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2, truncation_psi=1, pcp_ratio=0.5, sem_ratio=0.3):
@@ -44,7 +42,7 @@ class TwoStageLoss(Loss):
         self.sem_ratio = sem_ratio
         self.output_dir = 'MAT/small_result'
         os.makedirs(self.output_dir, exist_ok=True)
-        self.weights = {'adv': 1.0, 'pcp': 0.01, 'sem': 0.1}  # 进一步降低感知权重
+        self.weights = {'adv': 1.0, 'pcp': 10.0, 'sem': 10.0}
         self.target_ratios = {'adv': 0.50, 'pcp': 0.25, 'sem': 0.25}
 
     def run_G(self, img_in, mask_in, z, c, sync):
@@ -75,10 +73,10 @@ class TwoStageLoss(Loss):
         for layer, feat in pcp_features.items():
             feat_size = feat.shape[2:]
             weights_resized = F.interpolate(weights, size=feat_size, mode='nearest')
-            layer_loss = F.mse_loss(feat, gt_features[layer], reduction='none') / 100  # 降低量级
+            layer_loss = F.mse_loss(feat, gt_features[layer], reduction='none') / 100
             weighted_layer_loss = (layer_loss * weights_resized).mean()
             weighted_pcp_loss += weighted_layer_loss * self.pcp.layer_weights[layer]
-        weighted_pcp_loss = weighted_pcp_loss / 100  # 进一步归一化
+        weighted_pcp_loss = weighted_pcp_loss / 100
         print(f"[DEBUG] 加权感知损失: {weighted_pcp_loss.item():.4f}")
         return weighted_pcp_loss
 
@@ -98,8 +96,8 @@ class TwoStageLoss(Loss):
                 pcp_loss = self.perceptual_loss_with_weights(gen_img, real_img, seg_map) if seg_map is not None else self.pcp(gen_img, real_img)[0]
                 sem_loss = semantic_loss(gen_img, real_img, seg_map) if seg_map is not None else torch.tensor(0.0, device=self.device)
 
-                # 计算对抗损失（进一步放大）
-                adv_loss = (loss_Gmain + loss_Gmain_stg1).mean() * 100000.0  # 从 10000.0 增加到 100000.0
+                # 计算对抗损失
+                adv_loss = (loss_Gmain + loss_Gmain_stg1).mean() * 1000.0
                 # 动态权重计算总损失
                 loss_Gmain_all = (self.weights['adv'] * adv_loss + 
                                 self.weights['pcp'] * pcp_loss + 
@@ -113,14 +111,15 @@ class TwoStageLoss(Loss):
                     adv_ratio = (adv_loss.item() * self.weights['adv']) / total_loss_value
                     pcp_ratio = (pcp_loss.item() * self.weights['pcp']) / total_loss_value
                     sem_ratio = (sem_loss.item() * self.weights['sem']) / total_loss_value
-                    # 增强权重调整力度
-                    self.weights['adv'] *= (self.target_ratios['adv'] / (adv_ratio + 1e-8)) ** 2.0
-                    self.weights['pcp'] *= (self.target_ratios['pcp'] / (pcp_ratio + 1e-8)) ** 2.0
-                    self.weights['sem'] *= (self.target_ratios['sem'] / (sem_ratio + 1e-8)) ** 2.0
+                    # 优化权重调整：增加学习率
+                    lr = 0.2  # 从 0.1 提高到 0.2
+                    self.weights['adv'] = self.weights['adv'] * (1 - lr) + lr * (self.target_ratios['adv'] / (adv_ratio + 1e-8))
+                    self.weights['pcp'] = self.weights['pcp'] * (1 - lr) + lr * (self.target_ratios['pcp'] / (pcp_ratio + 1e-8))
+                    self.weights['sem'] = self.weights['sem'] * (1 - lr) + lr * (self.target_ratios['sem'] / (sem_ratio + 1e-8))
                     # 限制权重范围
-                    self.weights['adv'] = min(max(self.weights['adv'], 0.01), 100.0)
-                    self.weights['pcp'] = min(max(self.weights['pcp'], 0.01), 100.0)
-                    self.weights['sem'] = min(max(self.weights['sem'], 0.01), 100.0)
+                    self.weights['adv'] = min(max(self.weights['adv'], 0.1), 100.0)
+                    self.weights['pcp'] = min(max(self.weights['pcp'], 0.1), 100.0)
+                    self.weights['sem'] = min(max(self.weights['sem'], 0.1), 100.0)
                 else:
                     adv_ratio, pcp_ratio, sem_ratio = 0, 0, 0
 
@@ -185,12 +184,12 @@ class TwoStageLoss(Loss):
 def generate_weight_map(seg):
     weights = torch.ones_like(seg, dtype=torch.float32) * 1.0  # 背景权重
     weights[seg > 0] = 2.0  # 所有前景
-    print(f"[DEBUG] 权重图唯一值: {torch.unique(weights).cpu().numpy()}")
+    print(f"[DEBUG] 权重图唯一值: {torch.unique(weights).cpu().numpy()}")  # 将张量移到 CPU 再转 NumPy
     return weights
 
 def semantic_loss(pred, target, seg):
     weights = generate_weight_map(seg)
-    loss = F.mse_loss(pred, target, reduction='none') / 100  # 降低量级
+    loss = F.mse_loss(pred, target, reduction='none') / 100
     weighted_loss = (loss * weights).mean()
     print(f"[DEBUG] 语义损失（归一化后）: {weighted_loss.item():.4f}")
     return weighted_loss
