@@ -113,6 +113,7 @@ class Dataset(torch.utils.data.Dataset):
         assert image.dtype == np.uint8
         res = self.resolution
         H, W = image.shape[1], image.shape[2]
+        print(f"[DEBUG] 样本 {idx} - 原始图像尺寸: {H}x{W}")  # 添加原始尺寸日志
         h = random.randint(0, H - res) if H > res else 0
         w = random.randint(0, W - res) if W > res else 0
     
@@ -126,15 +127,11 @@ class Dataset(torch.utils.data.Dataset):
         if mask.shape[0] != H or mask.shape[1] != W:
             mask = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
         mask = mask[h:h+res, w:w+res]
-        mask = (mask > 128).astype(np.float32)  # 0/255 -> 0/1
+        mask = (mask > 128).astype(np.uint8)
         mask = mask[np.newaxis, :, :]  # [1, H, W]
         print(f"[DEBUG] 掩码 {mask_path} 原始值: {np.unique(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE))}")
         print(f"[DEBUG] 掩码处理后值: {np.unique(mask)}")
-    
-        if self._xflip[idx]:
-            image = image[:, :, ::-1]
-            mask = mask[:, :, ::-1]
-    
+
         # 加载分割图
         if hasattr(self, 'segs') and len(self.segs) > 0:
             seg_idx = self._raw_idx[idx]
@@ -145,7 +142,7 @@ class Dataset(torch.utils.data.Dataset):
                 seg_img = cv2.resize(seg_img, (W, H), interpolation=cv2.INTER_NEAREST)
             seg_img = seg_img[h:h+res, w:w+res]
             seg_img[seg_img == 255] = 0
-            seg_img[(seg_img > 20)] = 0
+            seg_img[(seg_img > 20)] = 0  # 确保与test_semantic_loss.py一致
             if idx < 10:
                 print(f"[DEBUG] 分割图 {self.segs[seg_idx]} 类别: {np.unique(seg_img)}")
             seg = seg_img[np.newaxis, :, :]
@@ -153,11 +150,15 @@ class Dataset(torch.utils.data.Dataset):
                 seg = seg[:, :, ::-1]
         else:
             seg = np.zeros((1, res, res), dtype=np.float32)
-    
+
         label = self.get_label(idx)
         if label.shape[0] == 0:
-            label = np.zeros(20, dtype=np.float32)
-    
+            label = np.zeros(20, dtype=np.float32)  # 统一为20个类别
+
+        if self._xflip[idx]:
+            image = image[:, :, ::-1]
+            mask = mask[:, :, ::-1]
+
         return image.copy(), mask, seg, label
 
     def get_label(self, idx):

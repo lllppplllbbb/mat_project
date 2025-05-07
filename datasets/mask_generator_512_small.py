@@ -85,11 +85,11 @@ def BatchRandomMask(batch_size, s, hole_range=[0, 1]):
 def generate_mask(img_path, output_path, resolution=512):
     """为单个图像生成掩码并保存"""
     mask = RandomMask(s=resolution)
-    mask = mask[0] * 255  # [1,s,s] -> [s,s], 0/1 -> 0/255 
-    mask_img = Image.fromarray(mask.astype(np.uint8), mode='L')
+    mask = mask[0]  # [0, 1]
+    mask_img = Image.fromarray(mask.astype(np.uint8) * 255, mode='L')  # 保存为[0, 255]
     mask_img.save(output_path)
     print(f"[DEBUG] 掩码 {output_path} 值: {np.unique(mask)}")
-    return mask
+    return mask.astype(np.uint8)  # 返回[0, 1]
 
 def save_masks(img_dir, mask_dir=None, resolution=512):
     # 如果没有指定mask_dir，则默认在img_dir下创建masks子目录
